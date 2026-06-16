@@ -1,0 +1,26 @@
+BasedOnStyle: Google
+
+AlignAfterOpenBracket: BlockIndent
+AlignArrayOfStructures: None
+AlignOperands: AlignAfterOperator
+Cpp11BracedListStyle: true
+
+AlignConsecutiveAssignments:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: false
+
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+AllowShortBlocksOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+BinPackArguments: false
+
+BreakConstructorInitializers: BeforeComma
+PackConstructorInitializers: NextLineOnly
+
+IndentWidth: 4
+ContinuationIndentWidth: 4
+AccessModifierOffset: -2
+
+

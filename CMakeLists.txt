@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 4.0)
+
+project(cecs)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_CXX_STANDARD 20)
+
+add_subdirectory(cecs)
+add_subdirectory(tests)
+
+target_link_libraries(main_test cecs)
