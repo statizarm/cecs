@@ -171,15 +171,27 @@ class TWorldImpl<TTypeList<T...>, buffer_size, TAllocator> {
         update_snapshots();
     }
 
-    template <typename TFunc, typename... TT>
+    template <typename... TT>
         requires(TTypeList<TT...>::template is_sub<T>::value || ...)
-    void select(TFunc func) {
-        call_impl(
-            func,
-            typename TFilter<
-                TTypeList<TT...>::template is_sub,
-                TTypeList<T...>>::type{}
-        );
+    auto select(auto func) {
+        using TSelected = typename TFilter<
+            TTypeList<TT...>::template is_sub,
+            TTypeList<T...>>::type;
+
+        // return TSubworld?
+
+        return TSelected::bind_functor([&]<typename... TArchetype>() {
+            (
+                [&](TContainerSnapshot<TArchetype>& snapshot) {
+                    for (auto it = snapshot.first; it != snapshot.second;
+                         ++it) {
+                        if (!it.erased()) {
+                            func(TEntity(*it, this));
+                        }
+                    }
+                }(std::get<TContainerSnapshot<TArchetype>>(snapshots_)),
+                ...);
+        })();
     }
 
     template <typename TFunc, typename... TT>

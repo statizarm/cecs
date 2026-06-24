@@ -1,6 +1,7 @@
 #pragma once
 
 #include <type_traits>
+#include <utility>
 
 #include "utils.hpp"
 
@@ -8,6 +9,13 @@ namespace NCecs {
 
 template <typename... TType>
 struct TTypeList;
+
+template <typename TFunctor, CIsInstanceOf<TTypeList>, typename... TArgs>
+struct TIsTemplateInvocable;
+
+template <typename TFunctor, typename TTypes, typename... TArgs>
+concept CIsTemplateInvocable =
+    TIsTemplateInvocable<TFunctor, TTypes, TArgs...>::value;
 
 template <template <typename> class TP, CIsInstanceOf<TTypeList> TList>
 struct TFilter;
@@ -27,14 +35,20 @@ struct TPartial;
 template <typename... TType>
 struct TTypeList {
   private:
-    template <CIsInstanceOf<TTypeList> T>
+    template <typename... T>
     struct TIntersectHelper;
 
-    template <CIsInstanceOf<TTypeList> T>
+    template <typename... T>
     struct TCatHelper;
 
-    template <CIsInstanceOf<TTypeList> T>
+    template <typename... T>
     struct THeadHelper;
+
+    template <template <typename...> class, typename...>
+    struct TBindTypeHelper;
+
+    template <typename TFunctor>
+    struct TBindFunctorHelper;
 
   private:
     using TThis = TTypeList<TType...>;
@@ -50,6 +64,8 @@ struct TTypeList {
     template <CIsInstanceOf<TTypeList> T>
     using ne = std::bool_constant<!eq<T>::value>;
 
+    template <template <typename...> class TWrapper>
+    using bind_type = TWrapper<TType...>;
     template <typename T>
     using add = std::conditional<
         has<T>::value, TTypeList<TType...>, TTypeList<T, TType...>>;
@@ -57,44 +73,69 @@ struct TTypeList {
     using del = TFilter<
         TNeg<TPartial<std::is_same, T>::template op>::template op, TThis>;
     template <CIsInstanceOf<TTypeList> T>
-    using intersect = TIntersectHelper<T>;
+    using intersect = typename T::template bind_type<TIntersectHelper>;
     template <CIsInstanceOf<TTypeList> T>
-    using cat = TCatHelper<T>;
+    using cat = typename T::template bind_type<TCatHelper>;
     template <CIsInstanceOf<TTypeList> T = TThis>
-    using head = THeadHelper<T>;
+    using head = typename T::template bind_type<THeadHelper>;
 
-    template <typename... T>
-    consteval bool operator==(const TTypeList<T...>&) const {
-        return eq<TTypeList<T...>>::value;
+    template <CIsInstanceOf<TTypeList> T>
+    consteval bool operator==(const T&) const {
+        return eq<T>::value;
     }
 
-    template <typename... T>
-    consteval bool operator!=(const TTypeList<T...>&) const {
-        return ne<TTypeList<T...>>::value;
+    template <CIsInstanceOf<TTypeList> T>
+    consteval bool operator!=(const T&) const {
+        return ne<TTypeList<T>>::value;
+    }
+
+    template <typename TFunctor>
+    static constexpr auto bind_functor(TFunctor&& func) {
+        return [&]<typename... TArgs>(TArgs&&... args) {
+            return func.template operator()<TType...>(
+                std::forward<TArgs>(args)...
+            );
+        };
     }
 
   private:
     template <>
-    struct TIntersectHelper<TTypeList<>> {
+    struct TIntersectHelper<> {
         using type = TTypeList<>;
     };
 
     template <typename TFirst, typename... T>
-    struct TIntersectHelper<TTypeList<TFirst, T...>> {
-        using rest = typename TIntersectHelper<TTypeList<T...>>::type;
+    struct TIntersectHelper<TFirst, T...> {
+        using rest = typename TIntersectHelper<T...>::type;
         using type = std::conditional_t<
             has<TFirst>::value, typename rest::template add<TFirst>::type,
             rest>;
     };
 
     template <typename... T>
-    struct TCatHelper<TTypeList<T...>> {
+    struct TCatHelper {
         using type = TTypeList<TType..., T...>;
     };
 
     template <typename T, typename... TRest>
-    struct THeadHelper<TTypeList<T, TRest...>> {
+    struct THeadHelper<T, TRest...> {
         using type = T;
+    };
+
+    template <typename TFunctor>
+    struct TBindFunctorHelper {
+        constexpr TBindFunctorHelper(TFunctor f)
+            : f_(f) {
+        }
+        template <typename... TArgs>
+        constexpr inline auto operator()(TArgs... args) {
+            return f_.template operator()<TType...>(
+                std::forward<TArgs>(args)...
+            );
+        }
+
+      private:
+        TFunctor f_;
     };
 };
 

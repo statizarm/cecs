@@ -30,7 +30,7 @@ int res = 0;
 auto visitor = [&res](auto entity) {
     res += entity.get<int>();
 };
-world.select<decltype(assertion), int>(assertion);
+world.select<int>(visitor);
 
 assert(res == 42);
 ```

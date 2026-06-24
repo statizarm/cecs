@@ -19,7 +19,10 @@ enable_testing()
 
 add_executable(
   main_test
+  buffer_layout_test.cpp
+  soa_test.cpp
   type_list_test.cpp
+  world_test.cpp
 )
 
 target_link_libraries(
