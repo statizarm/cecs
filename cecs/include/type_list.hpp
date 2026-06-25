@@ -140,6 +140,15 @@ struct TTypeList {
 };
 
 template <template <typename> class TP, CIsInstanceOf<TTypeList> TList>
+struct TAll : public std::bool_constant<
+                  std::same_as<typename TFilter<TP, TList>::type, TList>> {};
+
+template <template <typename> class TP, CIsInstanceOf<TTypeList> TList>
+struct TAny
+    : public std::bool_constant<
+          !std::same_as<typename TFilter<TP, TList>::type, TTypeList<>>> {};
+
+template <template <typename> class TP, CIsInstanceOf<TTypeList> TList>
 struct TFilter;
 
 template <template <typename> class TP>

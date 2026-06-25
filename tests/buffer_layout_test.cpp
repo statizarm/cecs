@@ -58,3 +58,19 @@ TEST(TBufferLayoutTest, TTestSortedUnsortedEquality) {
         unsorted_layout::offset<double>::value
     );
 }
+
+TEST(TBufferLayoutTest, TTestStorage) {
+    using sorted_layout =
+        NCecs::TBufferLayout<32, NCecs::TTypeList<double, int, char>>;
+
+    using TStorage = NCecs::TLayoutStorage<sorted_layout>;
+    static_assert(sizeof(TStorage) == 32);
+    TStorage storage;
+    storage.get<double>(0) = 42.l;
+    storage.get<int>(0)    = 100500;
+    storage.get<char>(0)   = 'a';
+
+    EXPECT_EQ(storage.get<double>(0), 42.l);
+    EXPECT_EQ(storage.get<int>(0), 100500);
+    EXPECT_EQ(storage.get<char>(0), 'a');
+}

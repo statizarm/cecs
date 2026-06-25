@@ -4,6 +4,8 @@
 
 #include <type_traits>
 
+#include "utils.hpp"
+
 TEST(TTypeListTest, THasType) {
     using l = NCecs::TTypeList<int, bool>;
 
@@ -112,6 +114,57 @@ TEST(TTypeListTest, TFilterBySize) {
                       NCecs::TPartial<TSame, double>::template op,
                       NCecs::TTypeList<int, char, double>>::type,
                   NCecs::TTypeList<double>>);
+}
+
+TEST(TTypeListTest, TAnyTest) {
+    using TList = NCecs::TTypeList<int, char, double>;
+
+    static_assert(
+        NCecs::TAny<NCecs::TPartial<std::is_same, int>::template op, TList>::
+            value
+    );
+    static_assert(
+        NCecs::TAny<NCecs::TPartial<std::is_same, char>::template op, TList>::
+            value
+    );
+    static_assert(
+        NCecs::TAny<NCecs::TPartial<std::is_same, double>::template op, TList>::
+            value
+    );
+    static_assert(
+        !NCecs::TAny<NCecs::TPartial<std::is_same, float>::template op, TList>::
+            value
+    );
+}
+
+TEST(TTypeListTest, TAllTest) {
+    using TList = NCecs::TTypeList<int, char, double>;
+
+    static_assert(
+        NCecs::TAll<TLessSize<2 * sizeof(double)>::template op, TList>::value
+    );
+    static_assert(
+        !NCecs::TAll<TLessSize<sizeof(int)>::template op, TList>::value
+    );
+    static_assert(
+        NCecs::TAll<
+            NCecs::TNeg<TLessSize<sizeof(char)>::template op>::template op,
+            TList>::value
+    );
+}
+
+TEST(TTypeListTest, TListOfListsTest) {
+    using TListOfLists = NCecs::TTypeList<
+        NCecs::TTypeList<int, char>,
+        NCecs::TTypeList<double, std::string>>;
+    using TMixList = NCecs::TTypeList<std::string, TListOfLists>;
+
+    static_assert(TListOfLists::bind_functor([]<typename... T> {
+        return (NCecs::CIsInstanceOf<T, NCecs::TTypeList> && ...);
+    })());
+    static_assert(!TMixList::bind_functor([]<typename... T> {
+        return (NCecs::CIsInstanceOf<T, NCecs::TTypeList> && ...);
+    })());
 }
 
 template <typename TL, typename TR>

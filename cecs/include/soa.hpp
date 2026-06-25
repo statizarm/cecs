@@ -14,6 +14,9 @@ namespace NCecs {
 template <CLayout T, typename TSOAContainer>
 class TSOAElementRef;
 
+template <CLayout T>
+struct alignas(T::kAlign) TSOA;
+
 template <
     std::size_t buffer_size, CIsInstanceOf<TTypeList> T,
     CAlignedAllocator<std::bit_ceil(buffer_size)> TAllocator =
@@ -294,6 +297,12 @@ class TSOAContainer {
     THeader* first_free_;
     std::size_t size_ = 0;
 };
+
+template <std::size_t size, typename... T>
+struct alignas(
+    TBufferLayout<size, TTypeList<T...>>::kAlign
+) TSOA<TBufferLayout<size, TTypeList<T...>>>
+    : public TLayoutStorage<TBufferLayout<size, TTypeList<T...>>> {};
 
 template <CLayout TLayout, typename TContainer>
 class TSOAElementRef {

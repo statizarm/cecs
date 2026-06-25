@@ -94,15 +94,27 @@ template <CIsInstanceOf<TEntity>... TEntities>
 class TVariantEntity {};
 
 template <
-    CIsInstanceOf<TTypeList> T, std::size_t buffer_size, typename TAllocator>
+    CIsInstanceOf<TTypeList> TAll, CIsInstanceOf<TTypeList> TKnown,
+    std::size_t buffer_size, typename TAllocator>
 class TWorldImpl;
 
 template <
-    std::size_t buffer_size, typename TAllocator, CIsInstanceOf<TTypeList>... T>
-    requires(CSOAAplicable<buffer_size, TAllocator, T> && ...)
-class TWorldImpl<TTypeList<T...>, buffer_size, TAllocator> {
+    std::size_t buffer_size, typename TAllocator,
+    CIsInstanceOf<TTypeList>... TAll, CIsInstanceOf<TTypeList>... TKnown>
+    requires(CSOAAplicable<buffer_size, TAllocator, TAll> && ...)
+class TWorldImpl<
+    TTypeList<TAll...>, TTypeList<TKnown...>, buffer_size, TAllocator> {
+  private:
+    template <
+        CIsInstanceOf<TTypeList>, CIsInstanceOf<TTypeList>, std::size_t,
+        typename>
+    friend class TWorldImpl;
+
   public:
-    using TThis = TWorldImpl<TTypeList<T...>, buffer_size, TAllocator>;
+    using TAllArchetypes   = TTypeList<TAll...>;
+    using TKnownArchetypes = TTypeList<TKnown...>;
+    using TThis =
+        TWorldImpl<TAllArchetypes, TKnownArchetypes, buffer_size, TAllocator>;
 
   public:
     TWorldImpl()
@@ -110,8 +122,30 @@ class TWorldImpl<TTypeList<T...>, buffer_size, TAllocator> {
         update_snapshots();
     }
 
+    auto& get_whole_world() {
+        using TWholeWorld =
+            TWorldImpl<TAllArchetypes, TAllArchetypes, buffer_size, TAllocator>;
+
+        if constexpr (TAllArchetypes::template eq<TKnownArchetypes>::value) {
+            return *this;
+        } else {
+            static_assert(alignof(TThis) == alignof(TWholeWorld));
+            static_assert(
+                offsetof(TThis, containers_) ==
+                offsetof(TWholeWorld, containers_)
+            );
+            static_assert(
+                offsetof(TThis, snapshots_) == offsetof(TWholeWorld, snapshots_)
+            );
+
+            return *reinterpret_cast<TWholeWorld*>(this);
+        }
+    }
+
     template <typename... TT>
-        requires(TTypeList<std::decay_t<TT>...>::template eq<T>::value || ...)
+        requires(TAny<
+                 TTypeList<std::decay_t<TT>...>::template eq,
+                 TAllArchetypes>::value)
     auto create() {
         using TContainerType =
             TMatchedContainer<TTypeList<std::decay_t<TT>...>>;
@@ -123,7 +157,9 @@ class TWorldImpl<TTypeList<T...>, buffer_size, TAllocator> {
     }
 
     template <typename... TT>
-        requires(TTypeList<std::decay_t<TT>...>::template eq<T>::value || ...)
+        requires(TAny<
+                 TTypeList<std::decay_t<TT>...>::template eq,
+                 TAllArchetypes>::value)
     auto create(TT... args) {
         using TContainerType =
             TMatchedContainer<TTypeList<std::decay_t<TT>...>>;
@@ -167,26 +203,46 @@ class TWorldImpl<TTypeList<T...>, buffer_size, TAllocator> {
     }
 
     void commit() {
-        ((std::get<TContainer<T>>(containers_).commit()), ...);
+        ((std::get<TContainer<TAll>>(containers_).commit()), ...);
         update_snapshots();
     }
 
     template <typename... TT>
-        requires(TTypeList<TT...>::template is_sub<T>::value || ...)
-    auto select(auto func) {
+        requires(
+            TAny<TTypeList<TT...>::template is_sub, TKnownArchetypes>::value
+        )
+    auto& select() {
         using TSelected = typename TFilter<
             TTypeList<TT...>::template is_sub,
-            TTypeList<T...>>::type;
+            TKnownArchetypes>::type;
 
-        // return TSubworld?
+        using TSubWorld =
+            TWorldImpl<TAllArchetypes, TSelected, buffer_size, TAllocator>;
 
-        return TSelected::bind_functor([&]<typename... TArchetype>() {
+        if constexpr (std::is_same_v<TThis, TSubWorld>) {
+            return *this;
+        } else {
+            static_assert(alignof(TThis) == alignof(TSubWorld));
+            static_assert(
+                offsetof(TThis, containers_) == offsetof(TSubWorld, containers_)
+            );
+            static_assert(
+                offsetof(TThis, snapshots_) == offsetof(TSubWorld, snapshots_)
+            );
+
+            return *reinterpret_cast<TSubWorld*>(this);
+        }
+    }
+
+    template <typename TFunc>
+    auto run(TFunc&& func) {
+        return TKnownArchetypes::bind_functor([&]<typename... TArchetype>() {
             (
                 [&](TContainerSnapshot<TArchetype>& snapshot) {
                     for (auto it = snapshot.first; it != snapshot.second;
                          ++it) {
                         if (!it.erased()) {
-                            func(TEntity(*it, this));
+                            std::forward<TFunc>(func)(TEntity(*it, this));
                         }
                     }
                 }(std::get<TContainerSnapshot<TArchetype>>(snapshots_)),
@@ -194,71 +250,47 @@ class TWorldImpl<TTypeList<T...>, buffer_size, TAllocator> {
         })();
     }
 
-    template <typename TFunc, typename... TT>
-        requires(TTypeList<TT...>::template is_sub<T>::value || ...)
-    void select_batch(TFunc func) {
-        call_batch_impl(
-            func,
-            typename TFilter<
-                TTypeList<TT...>::template is_sub,
-                TTypeList<T...>>::type{}
-        );
+    template <typename TFunc>
+    auto run_batched(TFunc&& func) {
     }
 
   private:
     inline void update_snapshots() {
-        ((std::get<TContainerSnapshot<T>>(snapshots_) = TContainerSnapshot<T>(
-              std::get<TContainer<T>>(containers_).begin(),
-              std::get<TContainer<T>>(containers_).end()
-          )),
+        ((std::get<TContainerSnapshot<TAll>>(snapshots_) =
+              TContainerSnapshot<TAll>(
+                  std::get<TContainer<TAll>>(containers_).begin(),
+                  std::get<TContainer<TAll>>(containers_).end()
+              )),
          ...);
     }
 
-    template <typename TFunc, typename... TArchetype>
-    inline void call_impl(TFunc func, TTypeList<TArchetype...>) {
-        (
-            [this, &func](TContainerSnapshot<TArchetype> snapshot) {
-                for (auto begin = snapshot.first; begin != snapshot.second;
-                     ++begin) {
-                    if (!begin.erased()) {
-                        func(TEntity<decltype(*begin), TThis>(*begin, this));
-                    }
-                }
-            }(std::get<TContainerSnapshot<TArchetype>>(snapshots_)),
-            ...);
-    }
-
-    template <typename TFunc, typename... TArchetype>
-    inline void call_batch_impl(TFunc, TTypeList<TArchetype...>) {
-    }
-
   private:
-    template <COneOf<T...> TT>
+    template <COneOf<TAll...> TT>
     using TContainer = TSOAContainer<buffer_size, TT, TAllocator>;
 
-    template <COneOf<T...> TT>
+    template <COneOf<TAll...> TT>
     using TContainerSnapshot = std::pair<
         typename TContainer<TT>::iterator, typename TContainer<TT>::iterator>;
 
-    using TContainers         = std::tuple<TContainer<T>...>;
-    using TContainersSnapshot = std::tuple<TContainerSnapshot<T>...>;
+    using TContainers         = std::tuple<TContainer<TAll>...>;
+    using TContainersSnapshot = std::tuple<TContainerSnapshot<TAll>...>;
 
     template <CIsInstanceOf<TTypeList> TArchetype>
-        requires(TArchetype::template eq<T>::value || ...)
+        requires(TArchetype::template eq<TAll>::value || ...)
     using TMatchedArchetypes =
-        typename TFilter<TArchetype::template eq, TTypeList<T...>>::type;
+        typename TFilter<TArchetype::template eq, TTypeList<TAll...>>::type;
 
     template <CIsInstanceOf<TTypeList> TArchetype>
-        requires(TArchetype::template eq<T>::value || ...)
+        requires(TArchetype::template eq<TAll>::value || ...)
     using TMatchedArchetype =
         typename TMatchedArchetypes<TArchetype>::template head<>::type;
 
     template <CIsInstanceOf<TTypeList> TArchetype>
-        requires(TArchetype::template eq<T>::value || ...)
+        requires(TArchetype::template eq<TAll>::value || ...)
     using TMatchedContainer = TContainer<TMatchedArchetype<TArchetype>>;
 
     template <CIsInstanceOf<TTypeList> TArchetype>
-        requires(TArchetype::template eq<T>::value || ...)
+        requires(TArchetype::template eq<TAll>::value || ...)
     using TMatchedContainerSnapshot =
         TContainerSnapshot<TMatchedArchetype<TArchetype>>;
 
@@ -268,8 +300,12 @@ class TWorldImpl<TTypeList<T...>, buffer_size, TAllocator> {
 };
 
 template <
-    CIsInstanceOf<TTypeList> TArchetypes, std::size_t buffer_size = 4 << 10,
+    CIsInstanceOf<TTypeList> TAllArchetypes, std::size_t buffer_size = 4 << 10,
     typename TAllocator = TStdAlignedAllocator>
-using TWorld = TWorldImpl<TArchetypes, buffer_size, TAllocator>;
+    requires(TAllArchetypes::bind_functor([]<typename... TArch>() -> bool {
+                return (CIsInstanceOf<TArch, TTypeList> && ...);
+            })())
+using TWorld =
+    TWorldImpl<TAllArchetypes, TAllArchetypes, buffer_size, TAllocator>;
 
 }  // namespace NCecs

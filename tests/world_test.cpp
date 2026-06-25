@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <memory>
 #include <type_traits>
 
 #include "type_list.hpp"
@@ -13,6 +14,54 @@ TEST(TWorld, TTestConstructDestructWorld) {
         NCecs::TTypeList<int, double>,
         NCecs::TTypeList<char>>>
         world;
+}
+
+TEST(TWorld, TTestSubWorld) {
+    using TW = NCecs::TWorld<NCecs::TTypeList<
+        NCecs::TTypeList<int, char, double>,
+        NCecs::TTypeList<std::string, float>,
+        NCecs::TTypeList<int, double>,
+        NCecs::TTypeList<char>>>;
+
+    TW world;
+
+    auto& subworld1      = world.select<int>();
+    using TSubworldType1 = std::decay_t<decltype(subworld1)>;
+    static_assert(std::same_as<
+                  TSubworldType1::TKnownArchetypes,
+                  NCecs::TTypeList<
+                      NCecs::TTypeList<int, char, double>,
+                      NCecs::TTypeList<int, double>>>);
+    EXPECT_EQ(
+        static_cast<void*>(std::addressof(world)),
+        static_cast<void*>(std::addressof(subworld1))
+    );
+
+    auto& subworld2      = subworld1.select<char>();
+    using TSubworldType2 = std::decay_t<decltype(subworld2)>;
+    static_assert(std::same_as<
+                  TSubworldType2::TKnownArchetypes,
+                  NCecs::TTypeList<NCecs::TTypeList<int, char, double>>>);
+    EXPECT_EQ(
+        static_cast<void*>(std::addressof(world)),
+        static_cast<void*>(std::addressof(subworld2))
+    );
+
+    auto& whole_world1 = subworld1.get_whole_world();
+    auto& whole_world2 = subworld2.get_whole_world();
+    using TWholeWorld1 = std::decay_t<decltype(whole_world1)>;
+    using TWholeWorld2 = std::decay_t<decltype(whole_world2)>;
+    static_assert(std::same_as<TWholeWorld1, TWholeWorld2>);
+    static_assert(std::same_as<TWholeWorld1, TW>);
+
+    EXPECT_EQ(
+        static_cast<void*>(std::addressof(whole_world1)),
+        static_cast<void*>(std::addressof(whole_world2))
+    );
+    EXPECT_EQ(
+        static_cast<void*>(std::addressof(whole_world1)),
+        static_cast<void*>(std::addressof(world))
+    );
 }
 
 TEST(TWorld, TTestCreate) {
@@ -114,21 +163,21 @@ TEST(TWorld, TTestSelect) {
             ++string_count;
         }
     };
-    world.select<int>(func);
+    world.select<int>().run(func);
 
     EXPECT_EQ(string_count, kSize / 4);
     EXPECT_EQ(total_calls, kSize);
 
     string_count = 0;
     total_calls  = 0;
-    world.select<char>(func);
+    world.select<char>().run(func);
     EXPECT_EQ(string_count, 0);
     EXPECT_EQ(total_calls, kSize / 2);
 
     string_count = 0;
     total_calls  = 0;
-    world.select<int>(func);
-    world.select<int>(func);
+    world.select<int>().run(func);
+    world.select<int>().run(func);
 
     EXPECT_EQ(string_count, kSize / 2);
     EXPECT_EQ(total_calls, kSize * 2);
@@ -195,13 +244,13 @@ TEST(TWorld, TTestMovedEntititesUnseenUntilCommit) {
     auto assertion = [&res](auto entity) {
         res = res || entity.template has<int>();
     };
-    world.select<int>(assertion);
+    world.select<int>().run(assertion);
     world.commit();
 
     EXPECT_FALSE(res);
 
     res = false;
-    world.select<int>(assertion);
+    world.select<int>().run(assertion);
     EXPECT_TRUE(res);
 }
 
@@ -246,7 +295,7 @@ TEST(TWorld, TTestSelectWithAddDeleteComponents) {
             ++moves_count;
         }
     };
-    world.select<int>(func);
+    world.select<int>().run(func);
 
     EXPECT_EQ(total_calls, kSize);
     EXPECT_EQ(moves_count, kSize / 2);
@@ -255,7 +304,7 @@ TEST(TWorld, TTestSelectWithAddDeleteComponents) {
     total_calls               = 0;
     moves_count               = 0;
 
-    world.select<int>(func);
+    world.select<int>().run(func);
 
     EXPECT_EQ(total_calls, kSize - moves_history);
     EXPECT_EQ(moves_count, 0);
@@ -320,14 +369,14 @@ TEST(TWorld, TTestSelectWithAddDeleteComponentsBetweenDifferentWorlds) {
             ++moves_count;
         }
     };
-    world1.select<int>(func);
+    world1.select<int>().run(func);
 
     auto world1_total_calls = total_calls;
     auto world1_moves_count = moves_count;
 
     total_calls = 0;
     moves_count = 0;
-    world2.select<int>(func);
+    world2.select<int>().run(func);
 
     auto world2_total_calls = total_calls;
     auto world2_moves_count = moves_count;

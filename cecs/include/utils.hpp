@@ -21,4 +21,10 @@ struct TValueHolder {
     static constexpr T value = val;
 };
 
+template <template <typename...> class TTemplate, typename... T>
+struct TPartialTemplate {
+    template <typename... TT>
+    using type = TTemplate<T..., TT...>;
+};
+
 }  // namespace NCecs
