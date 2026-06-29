@@ -27,4 +27,9 @@ struct TPartialTemplate {
     using type = TTemplate<T..., TT...>;
 };
 
+template <typename... TF>
+struct TOverloaded : public TF... {
+    using TF::operator()...;
+};
+
 }  // namespace NCecs

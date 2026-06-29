@@ -384,3 +384,37 @@ TEST(TWorld, TTestSelectWithAddDeleteComponentsBetweenDifferentWorlds) {
     EXPECT_EQ(world1_total_calls, world2_total_calls);
     EXPECT_EQ(world1_moves_count, world2_moves_count);
 }
+
+TEST(TWorld, TTestVariantEntityGetHas) {
+    NCecs::TWorld<
+        NCecs::TTypeList<NCecs::TTypeList<int>, NCecs::TTypeList<int, char>>>
+        world;
+
+    auto entity1 = world.create<int, char>(1, '1');
+    EXPECT_EQ(entity1.get<int>(), 1);
+    EXPECT_EQ(entity1.get<char>(), '1');
+
+    auto entity2 = world.create<int>(2);
+    EXPECT_EQ(entity2.get<int>(), 2);
+
+    using TVar = NCecs::TVariantEntity<decltype(entity1), decltype(entity2)>;
+    TVar variant_entity{entity1};
+
+    EXPECT_EQ(variant_entity.get<int>(), 1);
+    EXPECT_TRUE(variant_entity.has<char>());
+    EXPECT_EQ(variant_entity.get<char>(), '1');
+
+    variant_entity = TVar(entity2);
+
+    EXPECT_EQ(variant_entity.get<int>(), 2);
+    EXPECT_FALSE(variant_entity.has<char>());
+
+    const TVar const_variant_entity = entity2;
+
+    static_assert(std::same_as<
+                  decltype(const_variant_entity.template get<int>()),
+                  const int&>);
+
+    EXPECT_EQ(variant_entity.get<int>(), 2);
+    EXPECT_FALSE(variant_entity.has<char>());
+}

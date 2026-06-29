@@ -23,6 +23,7 @@ add_executable(
   soa_test.cpp
   type_list_test.cpp
   world_test.cpp
+  uitls_test.cpp
 )
 
 target_link_libraries(

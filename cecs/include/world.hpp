@@ -2,6 +2,7 @@
 
 #include <tuple>
 #include <type_traits>
+#include <variant>
 
 #include "allocator.hpp"
 #include "soa.hpp"
@@ -91,7 +92,62 @@ class TEntity {
 };
 
 template <CIsInstanceOf<TEntity>... TEntities>
-class TVariantEntity {};
+class TVariantEntity {
+  public:
+    template <COneOf<TEntities...> T>
+    TVariantEntity(T entity)
+        : storage_(std::forward<T>(entity)) {
+    }
+
+  public:
+    template <typename T>
+    bool has() const {
+        return std::visit(
+            [](const auto& e) -> bool { return e.template has<T>(); }, storage_
+        );
+    }
+
+    template <typename T>
+    T& get() {
+        return std::visit(
+            TOverloaded{[]<COneOf<TEntities...> TE>(TE& e) -> T& {
+                if constexpr (TE::TArchetype::template has<T>::value) {
+                    return e.template get<T>();
+                } else {
+                    // Huff.
+                    // Normaly code below never be executed
+                    return *reinterpret_cast<T*>(~0ul);
+                }
+            }},
+            storage_
+        );
+    }
+
+    template <typename T>
+    const T& get() const {
+        return std::visit(
+            TOverloaded{[]<COneOf<TEntities...> TE>(const TE& e) -> const T& {
+                if constexpr (e.template has<T>()) {
+                    return e.template get<T>();
+                } else {
+                    // Huff.
+                    // Normaly code below never be executed
+                    return *reinterpret_cast<T*>(~0ul);
+                }
+            }},
+            storage_
+        );
+    }
+
+    bool valid() {
+        return std::visit(
+            [](const auto& e) -> bool { return e.valid(); }, storage_
+        );
+    }
+
+  private:
+    std::variant<TEntities...> storage_;
+};
 
 template <
     CIsInstanceOf<TTypeList> TAll, CIsInstanceOf<TTypeList> TKnown,
