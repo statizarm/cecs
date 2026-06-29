@@ -66,45 +66,4 @@ struct TIsInstanceOfLayout<TBufferLayout<size, T>> : public std::true_type {};
 template <typename T>
 concept CLayout = TIsInstanceOfLayout<T>::value;
 
-template <CLayout TLayout, typename... T>
-struct TLayoutStorageImpl;
-
-template <CLayout TLayout>
-struct TLayoutStorageImpl<TLayout> {
-    void get();
-};
-
-template <CLayout TLayout, typename TFirst, typename... TRest>
-struct TLayoutStorageImpl<TLayout, TFirst, TRest...>
-    : public TLayoutStorageImpl<TLayout, TRest...> {
-  private:
-    using TBase = TLayoutStorageImpl<TLayout, TRest...>;
-
-  public:
-    template <COneOf<TFirst, TRest...> T>
-    auto& get(std::size_t idx) {
-        if constexpr (std::same_as<TFirst, T>) {
-            return data[idx];
-        } else {
-            return static_cast<TBase*>(this)->template get<T>(idx);
-        }
-    }
-
-    template <std::same_as<TFirst> T>
-    const auto& get(std::size_t idx) const {
-        if constexpr (std::same_as<TFirst, T>) {
-            return data[idx];
-        } else {
-            return static_cast<TBase*>(this)->template get<T>(idx);
-        }
-    }
-
-  private:
-    TFirst data[TLayout::kMaxElements];
-};
-
-template <CLayout TLayout>
-using TLayoutStorage = TLayout::types::template bind_type<
-    TPartialTemplate<TLayoutStorageImpl, TLayout>::template type>;
-
 }  // namespace NCecs

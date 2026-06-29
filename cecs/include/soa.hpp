@@ -298,12 +298,6 @@ class TSOAContainer {
     std::size_t size_ = 0;
 };
 
-template <std::size_t size, typename... T>
-struct alignas(
-    TBufferLayout<size, TTypeList<T...>>::kAlign
-) TSOA<TBufferLayout<size, TTypeList<T...>>>
-    : public TLayoutStorage<TBufferLayout<size, TTypeList<T...>>> {};
-
 template <CLayout TLayout, typename TContainer>
 class TSOAElementRef {
     friend TContainer;
