@@ -10,13 +10,6 @@ namespace NCecs {
 template <typename... TType>
 struct TTypeList;
 
-template <typename TFunctor, CIsInstanceOf<TTypeList>, typename... TArgs>
-struct TIsTemplateInvocable;
-
-template <typename TFunctor, typename TTypes, typename... TArgs>
-concept CIsTemplateInvocable =
-    TIsTemplateInvocable<TFunctor, TTypes, TArgs...>::value;
-
 template <template <typename> class TP, CIsInstanceOf<TTypeList> TList>
 struct TFilter;
 
@@ -137,6 +130,22 @@ struct TTypeList {
       private:
         TFunctor f_;
     };
+};
+
+template <typename... T>
+struct TUnique;
+
+template <>
+struct TUnique<> {
+    using type = TTypeList<>;
+};
+
+template <typename T, typename... TRest>
+struct TUnique<T, TRest...> {
+    using rest = TUnique<TRest...>::type;
+    using type = typename std::conditional_t<
+        COneOf<T, TRest...>, rest,
+        typename TTypeList<T>::template cat<rest>::type>;
 };
 
 template <template <typename> class TP, CIsInstanceOf<TTypeList> TList>

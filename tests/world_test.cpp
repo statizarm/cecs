@@ -418,3 +418,31 @@ TEST(TWorld, TTestVariantEntityGetHas) {
     EXPECT_EQ(variant_entity.get<int>(), 2);
     EXPECT_FALSE(variant_entity.has<char>());
 }
+
+TEST(TWorld, TTestVariantEntityAddDel) {
+    NCecs::TWorld<
+        NCecs::TTypeList<NCecs::TTypeList<int>, NCecs::TTypeList<int, char>>>
+        world;
+
+    auto entity1 = world.create<int, char>(1, '1');
+    auto entity2 = world.create<int>(2);
+
+    using TVar = NCecs::TVariantEntity<decltype(entity1), decltype(entity2)>;
+    TVar variant_entity{entity1};
+
+    EXPECT_EQ(variant_entity.get<int>(), 1);
+    EXPECT_TRUE(variant_entity.has<char>());
+    EXPECT_EQ(variant_entity.get<char>(), '1');
+
+    auto new_var = variant_entity.template del<char>();
+
+    EXPECT_EQ(new_var.get<int>(), 1);
+    EXPECT_FALSE(new_var.has<char>());
+
+    /*
+    auto new_new_var = new_var.add<char>('9');
+    EXPECT_EQ(variant_entity.get<int>(), 1);
+    EXPECT_TRUE(variant_entity.has<char>());
+    EXPECT_EQ(variant_entity.get<char>(), '9');
+    */
+}

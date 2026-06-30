@@ -139,6 +139,40 @@ class TVariantEntity {
         );
     }
 
+    template <typename T, typename... TArgs>
+        requires(std::is_constructible_v<T, TArgs...>)
+    auto add(TArgs&&... args) {
+        using TResultList    = TUnique<std::invoke_result_t<
+            decltype(&TEntities::template add<T>),
+            TEntities,
+            TArgs...>...>::type;
+        using TResultVariant = TResultList::template bind_type<TVariantEntity>;
+
+        return std::visit(
+            [&](auto& e) -> TResultVariant {
+                return TResultVariant{
+                    e.template add<T>(std::forward<TArgs>(args)...)
+                };
+            },
+            storage_
+        );
+    }
+
+    template <typename T>
+    auto del() {
+        using TResultList    = TUnique<std::invoke_result_t<
+            decltype(&TEntities::template del<T>),
+            TEntities>...>::type;
+        using TResultVariant = TResultList::template bind_type<TVariantEntity>;
+
+        return std::visit(
+            [&](auto& e) -> TResultVariant {
+                return TResultVariant{e.template del<T>()};
+            },
+            storage_
+        );
+    }
+
     bool valid() {
         return std::visit(
             [](const auto& e) -> bool { return e.valid(); }, storage_
