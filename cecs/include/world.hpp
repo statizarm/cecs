@@ -143,7 +143,7 @@ class TVariantEntity {
         requires(std::is_constructible_v<T, TArgs...>)
     auto add(TArgs&&... args) {
         using TResultList    = TUnique<std::invoke_result_t<
-            decltype(&TEntities::template add<T>),
+            decltype(&TEntities::template add<T, TArgs...>),
             TEntities,
             TArgs...>...>::type;
         using TResultVariant = TResultList::template bind_type<TVariantEntity>;

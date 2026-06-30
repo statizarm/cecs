@@ -435,14 +435,14 @@ TEST(TWorld, TTestVariantEntityAddDel) {
     EXPECT_EQ(variant_entity.get<char>(), '1');
 
     auto new_var = variant_entity.template del<char>();
+    world.commit();
 
     EXPECT_EQ(new_var.get<int>(), 1);
     EXPECT_FALSE(new_var.has<char>());
 
-    /*
     auto new_new_var = new_var.add<char>('9');
-    EXPECT_EQ(variant_entity.get<int>(), 1);
-    EXPECT_TRUE(variant_entity.has<char>());
-    EXPECT_EQ(variant_entity.get<char>(), '9');
-    */
+    world.commit();
+    EXPECT_EQ(new_new_var.get<int>(), 1);
+    EXPECT_TRUE(new_new_var.has<char>());
+    EXPECT_EQ(new_new_var.get<char>(), '9');
 }
