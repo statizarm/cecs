@@ -153,6 +153,50 @@ TEST(TTypeListTest, TAllTest) {
     );
 }
 
+TEST(TTypeListTest, TMapTest) {
+    using TList = NCecs::TTypeList<int, char, double>;
+    static_assert(std::same_as<
+                  typename TList::map<std::variant>::type,
+                  NCecs::TTypeList<
+                      std::variant<int>,
+                      std::variant<char>,
+                      std::variant<double>>>);
+}
+
+TEST(TTypeListTest, TAfterBeginTest) {
+    using TList     = NCecs::TTypeList<int, char, double>;
+    using TAfter    = typename TList::template after<int>::type;
+    using TExpected = NCecs::TTypeList<char, double>;
+
+    static_assert(std::same_as<TAfter, TExpected>);
+}
+
+TEST(TTypeListTest, TAfterMidTest) {
+    using TList     = NCecs::TTypeList<int, char, double>;
+    using TAfter    = typename TList::template after<char>::type;
+    using TExpected = NCecs::TTypeList<double>;
+
+    static_assert(std::same_as<TAfter, TExpected>);
+}
+
+TEST(TTypeListTest, TAfterEndTest) {
+    using TList     = NCecs::TTypeList<int, char, double>;
+    using TAfter    = typename TList::template after<double>::type;
+    using TExpected = NCecs::TTypeList<>;
+
+    static_assert(std::same_as<TAfter, TExpected>);
+}
+
+TEST(TTypeListTest, TEmptySizeTest) {
+    using TList = NCecs::TTypeList<>;
+    static_assert(TList::size == 0);
+}
+
+TEST(TTypeListTest, TNonEmptySizeTest) {
+    using TList = NCecs::TTypeList<int, char, double>;
+    static_assert(TList::size == 3);
+}
+
 TEST(TTypeListTest, TListOfListsTest) {
     using TListOfLists = NCecs::TTypeList<
         NCecs::TTypeList<int, char>,

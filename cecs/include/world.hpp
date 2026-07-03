@@ -16,10 +16,14 @@ concept CSOAAplicable =
     requires(TSOAContainer<buffer_size, T, TAllocator>& args) {
         (std::forward<TSOAContainer<buffer_size, T, TAllocator>>(args));
     };
+template <typename TW>
+class TWorldIterator;
 
 template <typename TRef, typename TWorld>
 class TEntity {
     friend TWorld;
+    template <typename>
+    friend class TWorldIterator;
 
   public:
     using TThis      = TEntity<TRef, TWorld>;
@@ -92,6 +96,7 @@ class TEntity {
 };
 
 template <CIsInstanceOf<TEntity>... TEntities>
+    requires(sizeof...(TEntities) > 0)
 class TVariantEntity {
   public:
     template <COneOf<TEntities...> T>
@@ -110,7 +115,7 @@ class TVariantEntity {
     template <typename T>
     T& get() {
         return std::visit(
-            TOverloaded{[]<COneOf<TEntities...> TE>(TE& e) -> T& {
+            []<COneOf<TEntities...> TE>(TE& e) -> T& {
                 if constexpr (TE::TArchetype::template has<T>::value) {
                     return e.template get<T>();
                 } else {
@@ -118,7 +123,7 @@ class TVariantEntity {
                     // Normaly code below never be executed
                     return *reinterpret_cast<T*>(~0ul);
                 }
-            }},
+            },
             storage_
         );
     }
@@ -126,7 +131,7 @@ class TVariantEntity {
     template <typename T>
     const T& get() const {
         return std::visit(
-            TOverloaded{[]<COneOf<TEntities...> TE>(const TE& e) -> const T& {
+            []<COneOf<TEntities...> TE>(const TE& e) -> const T& {
                 if constexpr (e.template has<T>()) {
                     return e.template get<T>();
                 } else {
@@ -134,7 +139,7 @@ class TVariantEntity {
                     // Normaly code below never be executed
                     return *reinterpret_cast<T*>(~0ul);
                 }
-            }},
+            },
             storage_
         );
     }
@@ -188,28 +193,181 @@ template <
     std::size_t buffer_size, typename TAllocator>
 class TWorldImpl;
 
+template <typename TW>
+class TWorldIterator {
+    friend TW;
+
+  private:
+    template <typename T>
+        requires(TW::TKnownArchetypes::template has<T>::value)
+    using TRefType = typename TW::template TContainer<T>::ref;
+    template <typename T>
+        requires(TW::TKnownArchetypes::template has<T>::value)
+    using TEntityType   = TEntity<TRefType<T>, TW>;
+    using TEntitiesList = TW::TKnownArchetypes::template map<TEntityType>::type;
+
+    template <typename T>
+        requires(TW::TKnownArchetypes::template has<T>::value)
+    using TContainerIteratorType = TW::template TContainer<T>::iterator;
+    using TContainerIteratorsList =
+        TW::TKnownArchetypes::template map<TContainerIteratorType>::type;
+
+  public:
+    using TThis = TWorldIterator<TW>;
+    using TCurrentIterator =
+        TContainerIteratorsList::template bind_type<std::variant>;
+    using TValue = TEntitiesList::template bind_type<TVariantEntity>;
+
+    using iterator_category = std::forward_iterator_tag;
+    using value_type        = TValue;
+    using difference_type   = std::ptrdiff_t;
+
+  public:
+    TWorldIterator& operator++() {
+        std::visit(
+            [this](auto& it) { it_ = increment_and_skip_invalid(it); }, it_
+        );
+        return *this;
+    }
+    TWorldIterator operator++(int) {
+        auto tmp = *this;
+        ++*this;
+        return tmp;
+    }
+
+    bool operator==(const TThis& other) const {
+        return it_ == other.it_ && world_ == other.world_;
+    }
+
+    bool operator!=(const TThis& other) const {
+        return !(*this == other);
+    }
+
+    TValue operator*() {
+        return std::visit(
+            [this](auto& it) {
+                const auto& ref = *it;
+                return TValue{
+                    TEntity<std::decay_t<decltype(ref)>, TW>(ref, world_)
+                };
+            },
+            it_
+        );
+    }
+
+    TValue operator*() const {
+        return std::visit(
+            [this](const auto& it) {
+                const auto& ref = *it;
+                return TValue{
+                    TEntity<std::decay_t<decltype(ref)>, TW>(ref, world_)
+                };
+            },
+            it_
+        );
+    }
+
+  private:
+    TWorldIterator(TW* world)
+        : it_(), world_(world) {
+    }
+
+    template <typename TI>
+        requires(TContainerIteratorsList::template has<std::decay_t<TI>>::value)
+    TWorldIterator(TW* world, TI&& it)
+        : it_(std::forward<TI>(it)), world_(world) {
+    }
+
+    template <typename TI>
+        requires(TContainerIteratorsList::template has<std::decay_t<TI>>::value)
+    TCurrentIterator increment_and_skip_invalid(TI& it) {
+        ++it;
+        return skip_invalid(it);
+    }
+
+    template <typename TI>
+        requires(TContainerIteratorsList::template has<std::decay_t<TI>>::value)
+    TCurrentIterator skip_invalid(TI it) {
+        auto end = get_end<TI>();
+        while (it.erased() && it != end) {
+            ++it;
+        }
+        if (it == end) {
+            if constexpr (has_next<TI>()) {
+                return skip_invalid(get_next<TI>());
+            } else {
+                return TCurrentIterator();
+            }
+        }
+        return it;
+    }
+
+    template <typename TI>
+        requires(TContainerIteratorsList::template has<std::decay_t<TI>>::value)
+    static constexpr bool has_next() {
+        return TContainerIteratorsList::template after<TI>::type::size > 0;
+    }
+
+    template <typename TI>
+        requires(TContainerIteratorsList::template has<std::decay_t<TI>>::value)
+    auto get_next() {
+        using TTail = TContainerIteratorsList::template after<TI>::type;
+        using TNextContainerIterator = typename TTail::template head<>::type;
+        using TNextContainer = typename TNextContainerIterator::TContainer;
+        using TNextContainerSnapshot =
+            std::pair<TNextContainerIterator, TNextContainerIterator>;
+
+        return std::get<TNextContainerSnapshot>(world_->snapshots_).first;
+    }
+
+    template <typename TI>
+        requires(TContainerIteratorsList::template has<TI>::value)
+    auto get_end() {
+        using TContainerSnapshot = std::pair<TI, TI>;
+        return std::get<TContainerSnapshot>(world_->snapshots_).second;
+    }
+
+  private:
+    TCurrentIterator it_;
+    TW* world_;
+};
+
 template <
     std::size_t buffer_size, typename TAllocator,
     CIsInstanceOf<TTypeList>... TAll, CIsInstanceOf<TTypeList>... TKnown>
     requires(CSOAAplicable<buffer_size, TAllocator, TAll> && ...)
 class TWorldImpl<
     TTypeList<TAll...>, TTypeList<TKnown...>, buffer_size, TAllocator> {
-  private:
-    template <
-        CIsInstanceOf<TTypeList>, CIsInstanceOf<TTypeList>, std::size_t,
-        typename>
-    friend class TWorldImpl;
-
   public:
     using TAllArchetypes   = TTypeList<TAll...>;
     using TKnownArchetypes = TTypeList<TKnown...>;
     using TThis =
         TWorldImpl<TAllArchetypes, TKnownArchetypes, buffer_size, TAllocator>;
+    using TIterator = TWorldIterator<TThis>;
+
+  private:
+    template <
+        CIsInstanceOf<TTypeList>, CIsInstanceOf<TTypeList>, std::size_t,
+        typename>
+    friend class TWorldImpl;
+    friend TIterator;
 
   public:
     TWorldImpl()
         : containers_(), snapshots_() {
         update_snapshots();
+    }
+
+    TIterator begin() {
+        return TIterator(
+            this,
+            std::get<TContainerSnapshot<
+                typename TKnownArchetypes::template head<>::type>>(snapshots_)
+                .first
+        );
+    }
+    TIterator end() {
+        return TIterator(this);
     }
 
     auto& get_whole_world() {
@@ -342,6 +500,7 @@ class TWorldImpl<
 
     template <typename TFunc>
     auto run_batched(TFunc&& func) {
+        return std::forward<TFunc>(func)(*this);
     }
 
   private:
@@ -362,7 +521,9 @@ class TWorldImpl<
     using TContainerSnapshot = std::pair<
         typename TContainer<TT>::iterator, typename TContainer<TT>::iterator>;
 
-    using TContainers         = std::tuple<TContainer<TAll>...>;
+    using TContainersList = TTypeList<TContainer<TAll>...>;
+    using TContainers     = TContainersList::template bind_type<std::tuple>;
+
     using TContainersSnapshot = std::tuple<TContainerSnapshot<TAll>...>;
 
     template <CIsInstanceOf<TTypeList> TArchetype>

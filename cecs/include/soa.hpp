@@ -68,6 +68,8 @@ class TSOAContainer {
         }
 
       public:
+        using TContainer = TThis;
+
         using difference_type   = std::ptrdiff_t;
         using value_type        = ref;
         using iterator_category = std::bidirectional_iterator_tag;

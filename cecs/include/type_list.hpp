@@ -43,6 +43,13 @@ struct TTypeList {
     template <typename TFunctor>
     struct TBindFunctorHelper;
 
+    template <template <typename> class TMapper>
+    struct TMapHelper;
+
+    template <typename T, typename... TT>
+        requires(COneOf<T, TT...>)
+    struct TAfterHelper;
+
   private:
     using TThis = TTypeList<TType...>;
 
@@ -71,7 +78,16 @@ struct TTypeList {
     using cat = typename T::template bind_type<TCatHelper>;
     template <CIsInstanceOf<TTypeList> T = TThis>
     using head = typename T::template bind_type<THeadHelper>;
+    template <template <typename> class T>
+    using map = TMapHelper<T>;
 
+    template <COneOf<TType...> T>
+    using after = TAfterHelper<T, TType...>;
+
+  public:
+    static constexpr std::size_t size = sizeof...(TType);
+
+  public:
     template <CIsInstanceOf<TTypeList> T>
     consteval bool operator==(const T&) const {
         return eq<T>::value;
@@ -129,6 +145,22 @@ struct TTypeList {
 
       private:
         TFunctor f_;
+    };
+
+    template <template <typename> class TTemplate>
+    struct TMapHelper {
+        using type = TTypeList<TTemplate<TType>...>;
+    };
+
+    template <typename T, typename TFirst, typename... TRest>
+        requires(std::same_as<T, TFirst>)
+    struct TAfterHelper<T, TFirst, TRest...> {
+        using type = TTypeList<TRest...>;
+    };
+    template <typename T, typename TFirst, typename... TRest>
+        requires(!std::same_as<T, TFirst>)
+    struct TAfterHelper<T, TFirst, TRest...> {
+        using type = typename TAfterHelper<T, TRest...>::type;
     };
 };
 

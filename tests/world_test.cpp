@@ -446,3 +446,38 @@ TEST(TWorld, TTestVariantEntityAddDel) {
     EXPECT_TRUE(new_new_var.has<char>());
     EXPECT_EQ(new_new_var.get<char>(), '9');
 }
+
+TEST(TWorld, TTestBatchSelect) {
+    static constexpr std::size_t kSize = 1 << 20;
+    NCecs::TWorld<NCecs::TTypeList<
+        NCecs::TTypeList<std::size_t>,
+        NCecs::TTypeList<std::size_t, std::string>>>
+        world;
+
+    for (std::size_t i = 0; i < kSize; ++i) {
+        if (i & 1) {
+            world.create<std::size_t, std::string>(i, "hello");
+        } else {
+            world.create<std::size_t>(i);
+        }
+    }
+    world.commit();
+
+    auto [counter, sum] = world.select<std::size_t>().run_batched(
+        [&](auto& subworld) -> std::pair<std::size_t, std::size_t> {
+            std::size_t sum     = 0;
+            std::size_t counter = 0;
+            for (auto entity : subworld) {
+                ++counter;
+                sum += entity.template get<std::size_t>();
+                if (entity.template has<std::string>()) {
+                    EXPECT_EQ(entity.template get<std::string>(), "hello");
+                }
+            }
+            return std::make_pair(counter, sum);
+        }
+    );
+
+    EXPECT_EQ(counter, kSize);
+    EXPECT_EQ(sum, (kSize - 1) * kSize / 2);
+}
