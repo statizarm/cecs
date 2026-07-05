@@ -7,5 +7,7 @@ set(CMAKE_CXX_STANDARD 20)
 
 add_subdirectory(cecs)
 add_subdirectory(tests)
+add_subdirectory(examples)
 
 target_link_libraries(main_test cecs)
+target_link_libraries(arcanoid cecs)
