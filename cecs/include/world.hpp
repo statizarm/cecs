@@ -85,6 +85,10 @@ class TEntity {
         return ref_.valid();
     }
 
+    void destroy() {
+        world_->destroy(*this);
+    }
+
   private:
     explicit TEntity(TRef ref, TWorld* world)
         : ref_(ref), world_(world) {
@@ -176,6 +180,10 @@ class TVariantEntity {
             },
             storage_
         );
+    }
+
+    void destroy() {
+        std::visit([](auto& e) -> void { e.destroy(); });
     }
 
     bool valid() {
@@ -275,7 +283,8 @@ class TWorldIterator {
     template <typename TI>
         requires(TContainerIteratorsList::template has<std::decay_t<TI>>::value)
     TWorldIterator(TW* world, TI&& it)
-        : it_(std::forward<TI>(it)), world_(world) {
+        : it_(), world_(world) {
+        it_ = skip_invalid(it);
     }
 
     template <typename TI>
@@ -501,6 +510,11 @@ class TWorldImpl<
     template <typename TFunc>
     auto run_batched(TFunc&& func) {
         return std::forward<TFunc>(func)(*this);
+    }
+
+    void clear() {
+        run([](auto entity) { entity.destroy(); });
+        commit();
     }
 
   private:

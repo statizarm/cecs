@@ -481,3 +481,38 @@ TEST(TWorld, TTestBatchSelect) {
     EXPECT_EQ(counter, kSize);
     EXPECT_EQ(sum, (kSize - 1) * kSize / 2);
 }
+
+TEST(TWorld, TTestEmptyIteration) {
+    using TWorld = NCecs::TWorld<
+        NCecs::TTypeList<NCecs::TTypeList<int, char>, NCecs::TTypeList<char>>>;
+    TWorld world;
+
+    std::size_t size = 0;
+    for (auto e : world) {
+        ++size;
+    }
+
+    EXPECT_EQ(size, 0);
+}
+
+TEST(TWorld, TTestClear) {
+    using TWorld = NCecs::TWorld<
+        NCecs::TTypeList<NCecs::TTypeList<int, char>, NCecs::TTypeList<char>>>;
+    TWorld world;
+
+    world.create<int, char>(10, '0');
+    world.create<char>('0');
+    world.commit();
+
+    std::size_t res = world.run_batched([](auto& subworld) -> std::size_t {
+        return std::distance(subworld.begin(), subworld.end());
+    });
+
+    EXPECT_EQ(res, 2);
+
+    world.clear();
+    res = world.run_batched([](auto& subworld) -> std::size_t {
+        return std::distance(subworld.begin(), subworld.end());
+    });
+    EXPECT_EQ(res, 0);
+}
