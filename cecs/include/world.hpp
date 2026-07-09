@@ -89,6 +89,14 @@ class TEntity {
         world_->destroy(*this);
     }
 
+    bool operator==(const TThis& other) const {
+        return world_ == other.world_ && ref_ == other.ref_;
+    }
+
+    bool operator!=(const TThis& other) const {
+        return !(*this == other);
+    }
+
   private:
     explicit TEntity(TRef ref, TWorld* world)
         : ref_(ref), world_(world) {
@@ -102,6 +110,8 @@ class TEntity {
 template <CIsInstanceOf<TEntity>... TEntities>
     requires(sizeof...(TEntities) > 0)
 class TVariantEntity {
+    using TThis = TVariantEntity<TEntities...>;
+
   public:
     template <COneOf<TEntities...> T>
     TVariantEntity(T entity)
@@ -190,6 +200,14 @@ class TVariantEntity {
         return std::visit(
             [](const auto& e) -> bool { return e.valid(); }, storage_
         );
+    }
+
+    bool operator==(const TThis& other) const {
+        return storage_ == other.storage_;
+    }
+
+    bool operator!=(const TThis& other) const {
+        return !(*this == other);
     }
 
   private:

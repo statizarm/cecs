@@ -383,6 +383,14 @@ class TSOAElementRef {
         move_from_impl(other, TAvailableTypes{});
     }
 
+    bool operator==(const TThis& other) const {
+        return ptr_ == other.ptr_ && position_ == other.position_;
+    }
+
+    bool operator!=(const TThis& other) const {
+        return !(*this == other);
+    }
+
   private:
     constexpr TSOAElementRef(void* ptr, std::size_t position)
         : ptr_(ptr), position_(position) {

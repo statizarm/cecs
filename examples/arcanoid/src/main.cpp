@@ -8,6 +8,7 @@
 #include <SFML/Window/VideoMode.hpp>
 #include <iostream>
 
+#include "utils.hpp"
 #include "world.hpp"
 
 using namespace NCecs;
@@ -44,6 +45,15 @@ using TArcanoidWorld = TWorld<
     >
 >;
 // clang-format on
+
+template <CIsInstanceOf<TEntity> TLeft, CIsInstanceOf<TEntity> TRight>
+struct TCollisionResponse {
+    sf::Vector2f pos_offset;
+    sf::Vector2f collision_normal;
+
+    TLeft left;
+    TRight right;
+};
 
 static constexpr sf::Vector2u kModSize = {200, 200};
 
@@ -119,6 +129,7 @@ class TGame {
     void init_level() {
         create_ball();
         create_platform();
+        create_walls();
     }
 
     void create_ball() {
@@ -134,6 +145,29 @@ class TGame {
             TPosition{.pos = kDefaultPlatformPosition},
             TPlatform{.size = kDefaultPlatformSize}
         );
+        world_.commit();
+    }
+
+    void create_walls() {
+        static constexpr std::array<std::pair<sf::Vector2f, sf::Vector2f>, 3>
+            walls = {
+                std::pair{
+                    sf::Vector2f{0, kModSize.y / 2},
+                    sf::Vector2f{2.f, kModSize.y}
+                },
+                std::pair{
+                    sf::Vector2f{kModSize.x / 2, 0}, sf::Vector2f{kModSize.x, 2}
+                },
+                std::pair{
+                    sf::Vector2f{kModSize.x, kModSize.y / 2},
+                    sf::Vector2f{2.f, kModSize.y}
+                },
+            };
+        for (const auto& wall : walls) {
+            world_.create<TPosition, TBlock>(
+                TPosition{.pos = wall.first}, TBlock{.size = wall.second}
+            );
+        }
         world_.commit();
     }
 
@@ -197,33 +231,90 @@ class TGame {
         });
     }
 
+    template <CIsInstanceOf<TEntity> TLeft, CIsInstanceOf<TEntity> TRight>
+    std::optional<TCollisionResponse<TLeft, TRight>> find_collision(
+        TLeft left, TRight right
+    ) {
+        if constexpr (std::same_as<TLeft, TRight>) {
+            if (left == right) {
+                return {};
+            }
+        }
+
+        sf::Vector2f pos_offset;
+        sf::Vector2f collision_normal;
+
+        if constexpr (
+            left.template has<TBall>() &&
+            (right.template has<TPlatform>() || right.template has<TBlock>())
+        ) {
+            sf::Vector2f aabb_pos = right.template get<TPosition>().pos;
+            sf::Vector2f aabb_size;
+            if constexpr (right.template has<TPlatform>()) {
+                aabb_size = right.template get<TPlatform>().size;
+            } else {
+                aabb_size = right.template get<TBlock>().size;
+            }
+            sf::Vector2f circle_pos = left.template get<TPosition>().pos;
+            float circle_radius     = left.template get<TBall>().radius;
+
+            auto distance = aabb_pos - circle_pos;
+
+            auto module_distance =
+                sf::Vector2f{std::abs(distance.x), std::abs(distance.y)};
+            auto diff = module_distance - (aabb_size / 2.f);
+
+            if (distance.dot(distance) < aabb_size.dot(aabb_size) &&
+                diff.x < circle_radius && diff.y < circle_radius) {
+                if (diff.x < diff.y) {
+                    collision_normal = {distance.x / std::abs(distance.x), 0.f};
+                    pos_offset.x =
+                        collision_normal.x * (circle_radius - diff.x + kEps);
+                } else {
+                    collision_normal = {0.f, distance.y / std::abs(distance.y)};
+                    pos_offset.y =
+                        collision_normal.y * (circle_radius - diff.y + kEps);
+                }
+            } else {
+                return {};
+            }
+        } else if constexpr (
+            left.template has<TPlatform>() && right.template has<TBlock>()
+        ) {
+            return {};
+        } else {
+            return {};
+        }
+        return {
+            TCollisionResponse<TLeft, TRight>{
+                .pos_offset       = pos_offset,
+                .collision_normal = collision_normal,
+                .left             = left,
+                .right            = right,
+            },
+        };
+    }
+
+    template <CIsInstanceOf<TEntity> TLeft, CIsInstanceOf<TEntity> TRight>
+    void handle_collision_response(TCollisionResponse<TLeft, TRight>& resp) {
+        auto& pos = resp.left.template get<TPosition>().pos;
+        pos       = pos + resp.pos_offset;
+        if constexpr (TLeft::TArchetype::template has<TVelocity>::value) {
+            auto& dir = resp.left.template get<TVelocity>().dir;
+            dir       = dir + 2.f * dir.projectedOnto(resp.collision_normal);
+        }
+    }
+
     void resolve_collisions(float dt) {
-        world_.select<TPosition, TVelocity, TBall>().run([dt](auto entity) {
-            auto& pos = entity.template get<TPosition>().pos;
-            auto r    = entity.template get<TBall>().radius;
-            auto& dir = entity.template get<TVelocity>().dir;
-            sf::Vector2f offset{0.f, 0.f};
-
-            if (pos.x < r) {
-                offset.x = (r - pos.x + kEps);
-                dir.x    = -dir.x;
-            } else if (pos.y < r) {
-                offset.y = (r - pos.y + kEps);
-                dir.y    = -dir.y;
-            } else if (pos.x + r > kModSize.x) {
-                offset.y = kModSize.x - (pos.x + r + kEps);
-                dir.x    = -dir.x;
-            } else if (pos.y + r > kModSize.y) {
-                offset.y = kModSize.y - (pos.y + r + kEps);
-                dir.y    = -dir.y;
-            }
-
-            if (offset.length() > 0) {
-                std::cout << pos.x << ' ' << pos.y << std::endl;
-                std::cout << offset.x << ' ' << offset.y << std::endl;
-            }
-
-            pos += offset;
+        auto& subworld = world_.select<TPosition>();
+        world_.select<TPosition, TVelocity, TBall>().run([&](auto entity) {
+            subworld.run([&](const auto positioned_entity) {
+                auto collision_response =
+                    find_collision(entity, positioned_entity);
+                if (collision_response) {
+                    handle_collision_response(*collision_response);
+                }
+            });
         });
     }
 
