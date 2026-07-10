@@ -1,3 +1,5 @@
+#include <SFML/Audio/Sound.hpp>
+#include <SFML/Audio/SoundBuffer.hpp>
 #include <SFML/Graphics.hpp>
 #include <SFML/Graphics/CircleShape.hpp>
 #include <SFML/Graphics/Color.hpp>
@@ -6,7 +8,9 @@
 #include <SFML/System/Vector2.hpp>
 #include <SFML/Window/Mouse.hpp>
 #include <SFML/Window/VideoMode.hpp>
+#include <filesystem>
 #include <iostream>
+#include <random>
 
 #include "utils.hpp"
 #include "world.hpp"
@@ -19,6 +23,7 @@ struct TPosition {
 
 struct TBlock {
     sf::Vector2f size;
+    std::size_t health;
 };
 
 struct TBall {
@@ -60,12 +65,16 @@ static constexpr sf::Vector2u kModSize = {200, 200};
 static constexpr float kEps = 1e-06;
 
 static constexpr sf::Vector2f kDefaultBallPosition = {100.f, 190.f};
-static constexpr float kDefaultBallVelocity        = {1000.f};
+static constexpr float kDefaultBallVelocity        = {200.f};
 static constexpr float kDefaultBallRadius          = {2.f};
+
+static constexpr std::size_t kWallHealth = static_cast<std::size_t>(-1);
 
 static constexpr sf::Vector2f kDefaultPlatformPosition = {100.f, 195.f};
 static constexpr sf::Vector2f kDefaultPlatformSize     = {50.f, 4.f};
-static constexpr float kDefaultPlatformVelocity        = {1000.f};
+static constexpr float kDefaultPlatformVelocity        = {200.f};
+
+static constexpr std::size_t kMaxBlockHealth = 5;
 
 enum class EPlatformDirection {
     LEFT,
@@ -80,6 +89,38 @@ class TGame {
 
     void init(std::size_t level = 0) {
         current_level_ = level;
+        if (!ball_platfrom_sound_buffer_.loadFromFile(
+                std::filesystem::current_path() /
+                std::filesystem::path(
+                    "assets/ball_platform_collision_sound.ogg"
+                )
+            )) {
+            std::cerr << "Could not load ball_platform collision sound"
+                      << std::endl;
+        } else {
+            ball_platform_sound_ = sf::Sound{ball_platfrom_sound_buffer_};
+        }
+
+        if (!ball_block_sound_buffer_.loadFromFile(
+                std::filesystem::current_path() /
+                std::filesystem::path("assets/ball_block_collision_sound.ogg")
+            )) {
+            std::cerr << "Could not load ball_block collision sound"
+                      << std::endl;
+        } else {
+            ball_block_sound_ = sf::Sound{ball_block_sound_buffer_};
+        }
+
+        if (!ball_wall_sound_buffer_.loadFromFile(
+                std::filesystem::current_path() /
+                std::filesystem::path("assets/ball_wall_collision_sound.ogg")
+            )) {
+            std::cerr << "Could not load ball_wall collision sound"
+                      << std::endl;
+        } else {
+            ball_wall_sound_ = sf::Sound{ball_wall_sound_buffer_};
+        }
+
         init_level();
     }
 
@@ -88,13 +129,43 @@ class TGame {
     }
 
     void update(float dt) {
-        static constexpr std::size_t kPhysicsIterations = 8;
-        for (std::size_t i = 0; i < kPhysicsIterations; ++i) {
-            move(dt / 8);
-            resolve_collisions(dt / 8);
+        static constexpr std::size_t kIterationsCount = 8;
+        for (std::size_t i = 0; i < kIterationsCount; ++i) {
+            move(dt / kIterationsCount);
+            resolve_collisions(dt / kIterationsCount);
         }
         draw();
         world_.commit();
+
+        if (is_loose()) {
+            deinit();
+            init(current_level_);
+        }
+        if (is_win()) {
+            deinit();
+            init(current_level_ + 1);
+        }
+    }
+
+    bool is_loose() {
+        return world_.select<TBall, TPosition>().run_batched(
+            [](auto& subworld) {
+                return std::distance(subworld.begin(), subworld.end()) == 0;
+            }
+        );
+    }
+
+    bool is_win() {
+        return world_.select<TBlock, TPosition>().run_batched(
+            [](auto& subworld) {
+                for (auto entity : subworld) {
+                    if (entity.template get<TBlock>().health != kWallHealth) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        );
     }
 
     void handle_input(const sf::Event& event) {
@@ -130,6 +201,35 @@ class TGame {
         create_ball();
         create_platform();
         create_walls();
+
+        static constexpr std::size_t kMinRows = 5;
+        std::size_t rows_count                = kMinRows + current_level_;
+        std::size_t columns_count             = 16;
+        std::size_t max_health = std::min(1 + current_level_, kMaxBlockHealth);
+        std::size_t min_health =
+            std::max<std::size_t>(1, std::max<int>(0, -3 + current_level_));
+
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> dist(min_health, max_health);
+
+        for (std::size_t i = 0; i < rows_count; ++i) {
+            for (std::size_t j = 0; j < columns_count; ++j) {
+                sf::Vector2f size = {
+                    static_cast<float>(kModSize.x) / columns_count,
+                    kDefaultPlatformSize.y
+                };
+                sf::Vector2f pos = {
+                    size.x * j + size.x / 2.f,
+                    size.y * i + size.y / 2.f,
+                };
+                std::size_t health = dist(gen);
+                world_.create<TPosition, TBlock>(
+                    TPosition{.pos = pos},
+                    TBlock{.size = size, .health = min_health}
+                );
+            }
+        }
     }
 
     void create_ball() {
@@ -165,7 +265,8 @@ class TGame {
             };
         for (const auto& wall : walls) {
             world_.create<TPosition, TBlock>(
-                TPosition{.pos = wall.first}, TBlock{.size = wall.second}
+                TPosition{.pos = wall.first},
+                TBlock{.size = wall.second, .health = kWallHealth}
             );
         }
         world_.commit();
@@ -200,8 +301,9 @@ class TGame {
             vel.vel = kDefaultPlatformVelocity;
             if (vel.dir.length() < kEps) {
                 entity.template del<TVelocity>();
+            } else {
+                vel.dir = vel.dir.normalized();
             }
-            vel.dir = vel.dir.normalized();
         });
         world_.commit();
     }
@@ -217,8 +319,9 @@ class TGame {
             vel.vel = kDefaultPlatformVelocity;
             if (vel.dir.length() < kEps) {
                 entity.template del<TVelocity>();
+            } else {
+                vel.dir = vel.dir.normalized();
             }
-            vel.dir = vel.dir.normalized();
         });
         world_.commit();
     }
@@ -258,7 +361,7 @@ class TGame {
             sf::Vector2f circle_pos = left.template get<TPosition>().pos;
             float circle_radius     = left.template get<TBall>().radius;
 
-            auto distance = aabb_pos - circle_pos;
+            auto distance = circle_pos - aabb_pos;
 
             auto module_distance =
                 sf::Vector2f{std::abs(distance.x), std::abs(distance.y)};
@@ -266,7 +369,7 @@ class TGame {
 
             if (distance.dot(distance) < aabb_size.dot(aabb_size) &&
                 diff.x < circle_radius && diff.y < circle_radius) {
-                if (diff.x < diff.y) {
+                if (std::abs(diff.x) < std::abs(diff.y)) {
                     collision_normal = {distance.x / std::abs(distance.x), 0.f};
                     pos_offset.x =
                         collision_normal.x * (circle_radius - diff.x + kEps);
@@ -301,8 +404,36 @@ class TGame {
         pos       = pos + resp.pos_offset;
         if constexpr (TLeft::TArchetype::template has<TVelocity>::value) {
             auto& dir = resp.left.template get<TVelocity>().dir;
-            dir       = dir + 2.f * dir.projectedOnto(resp.collision_normal);
+            dir       = (dir - 2.f * dir.projectedOnto(resp.collision_normal))
+                            .normalized();
         }
+        if constexpr (
+            TLeft::TArchetype::template has<TBall>::value &&
+            TRight::TArchetype::template has<TBlock>::value
+        ) {
+            auto& health = resp.right.template get<TBlock>().health;
+            if (health != kWallHealth) {
+                if (ball_block_sound_) {
+                    ball_block_sound_->play();
+                }
+                --health;
+            } else {
+                if (ball_wall_sound_) {
+                    ball_wall_sound_->play();
+                }
+            }
+            if (health == 0) {
+                resp.right.destroy();
+            }
+        } else if constexpr (
+            TLeft::TArchetype::template has<TBall>::value &&
+            TRight::TArchetype::template has<TPlatform>::value
+        ) {
+            if (ball_platform_sound_) {
+                ball_platform_sound_->play();
+            }
+        }
+        world_.commit();
     }
 
     void resolve_collisions(float dt) {
@@ -340,9 +471,14 @@ class TGame {
     }
 
     void draw_block(const TPosition& pos, const TBlock& block) {
-        auto shape = sf::RectangleShape(block.size);
+        auto border_shape = sf::RectangleShape(block.size);
+        border_shape.setFillColor(sf::Color::Yellow);
+        border_shape.setOrigin({block.size.x / 2, block.size.y / 2});
+        border_shape.setPosition(pos.pos);
+        window_->draw(border_shape);
+        auto shape = sf::RectangleShape(block.size * 0.9f);
         shape.setFillColor(get_block_fill_color(block));
-        shape.setOrigin({block.size.x / 2, block.size.y / 2});
+        shape.setOrigin({shape.getSize().x / 2, shape.getSize().y / 2});
         shape.setPosition(pos.pos);
         window_->draw(shape);
     }
@@ -363,7 +499,17 @@ class TGame {
     }
 
     sf::Color get_block_fill_color(const TBlock& block) {
-        return sf::Color::Green;
+        if (block.health == kWallHealth) {
+            return sf::Color::White;
+        }
+        static constexpr std::array<sf::Color, kMaxBlockHealth> colors = {
+            sf::Color::Green,
+            sf::Color::Cyan,
+            sf::Color::Blue,
+            sf::Color::Magenta,
+            sf::Color::Red,
+        };
+        return colors[block.health - 1];
     }
 
     sf::Color get_ball_fill_color(const TBall& ball) {
@@ -378,6 +524,12 @@ class TGame {
     sf::RenderWindow* window_;
     TArcanoidWorld world_;
     std::size_t current_level_;
+    sf::SoundBuffer ball_platfrom_sound_buffer_;
+    sf::SoundBuffer ball_block_sound_buffer_;
+    sf::SoundBuffer ball_wall_sound_buffer_;
+    std::optional<sf::Sound> ball_platform_sound_;
+    std::optional<sf::Sound> ball_block_sound_;
+    std::optional<sf::Sound> ball_wall_sound_;
 };
 
 int main() {
@@ -390,16 +542,16 @@ int main() {
 
     clock.restart();
     while (window.isOpen()) {
+        float dt = clock.getElapsedTime().asSeconds();
+        clock.restart();
         while (const std::optional event = window.pollEvent()) {
             if (event->is<sf::Event::Closed>()) window.close();
             game.handle_input(*event);
         }
 
         window.clear();
-        game.update(clock.getElapsedTime().asSeconds());
+        game.update(dt);
         window.display();
-
-        clock.restart();
     }
 
     game.deinit();

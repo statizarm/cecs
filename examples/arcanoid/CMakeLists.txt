@@ -22,4 +22,12 @@ add_executable(
 target_link_libraries(
   arcanoid
   SFML::Graphics
+  SFML::Audio
+)
+
+file(
+  COPY
+    assets
+  DESTINATION
+    ${CMAKE_CURRENT_BINARY_DIR}
 )
