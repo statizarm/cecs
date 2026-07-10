@@ -516,3 +516,25 @@ TEST(TWorld, TTestClear) {
     });
     EXPECT_EQ(res, 0);
 }
+
+TEST(TWorld, TTestCommitInsideIteration) {
+    static constexpr std::size_t kElementsCount = 1 << 10;
+    using TWorld =
+        NCecs::TWorld<NCecs::TTypeList<NCecs::TTypeList<std::size_t>>>;
+    TWorld world;
+
+    for (std::size_t i = 0; i < kElementsCount; ++i) {
+        world.create<std::size_t>(i);
+    }
+    EXPECT_TRUE(world.commit());
+
+    world.select<std::size_t>().run([&](auto entity) {
+        auto c = entity.template get<std::size_t>();
+        if (c > kElementsCount - 100 && c < kElementsCount - 10) {
+            entity.destroy();
+        } else if (c > kElementsCount - 10) {
+            EXPECT_FALSE(world.commit());
+        }
+    });
+    EXPECT_TRUE(world.commit());
+}

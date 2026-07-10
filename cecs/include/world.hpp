@@ -477,9 +477,16 @@ class TWorldImpl<
         }
     }
 
-    void commit() {
+    bool commit() {
+        // Really dumb shit. Can i replace this guard with consistency
+        // snapshots. Or may be different transaction interface?
+        if (iterating_) {
+            return false;
+        }
+
         ((std::get<TContainer<TAll>>(containers_).commit()), ...);
         update_snapshots();
+        return true;
     }
 
     template <typename... TT>
@@ -512,6 +519,8 @@ class TWorldImpl<
     template <typename TFunc>
     auto run(TFunc&& func) {
         return TKnownArchetypes::bind_functor([&]<typename... TArchetype>() {
+            iterating_ =
+                true;  // replace with Lock, snapshots, DB like consistency?
             (
                 [&](TContainerSnapshot<TArchetype>& snapshot) {
                     for (auto it = snapshot.first; it != snapshot.second;
@@ -522,12 +531,17 @@ class TWorldImpl<
                     }
                 }(std::get<TContainerSnapshot<TArchetype>>(snapshots_)),
                 ...);
+            iterating_ =
+                false;  // replace with Lock, snapshots, DB like consistency?
         })();
     }
 
     template <typename TFunc>
     auto run_batched(TFunc&& func) {
-        return std::forward<TFunc>(func)(*this);
+        iterating_      = true;
+        const auto& res = std::forward<TFunc>(func)(*this);
+        iterating_      = false;
+        return res;
     }
 
     void clear() {
@@ -580,6 +594,7 @@ class TWorldImpl<
   private:
     TContainers containers_;
     TContainersSnapshot snapshots_;
+    bool iterating_ = false;
 };
 
 template <

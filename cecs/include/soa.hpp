@@ -122,6 +122,14 @@ class TSOAContainer {
             return !(*this == other);
         }
 
+        bool operator<(const TIterator& other) const {
+            return position_ < other.position_;
+        }
+
+        bool operator>(const TIterator& other) const {
+            return position_ > other.position_;
+        }
+
         bool erased() const {
             return header_->erased.test(
                 position_ % buffer_layout::kMaxElements

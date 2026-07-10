@@ -134,14 +134,20 @@ class TGame {
             move(dt / kIterationsCount);
             resolve_collisions(dt / kIterationsCount);
         }
+
+        world_.select<TBall, TPosition>().run([](auto entity) {
+            const auto& pos = entity.template get<TPosition>().pos;
+            if (pos.y > kModSize.y + 10) {
+                entity.destroy();
+            }
+        });
         draw();
         world_.commit();
 
         if (is_loose()) {
             deinit();
             init(current_level_);
-        }
-        if (is_win()) {
+        } else if (is_win()) {
             deinit();
             init(current_level_ + 1);
         }
@@ -202,9 +208,9 @@ class TGame {
         create_platform();
         create_walls();
 
-        static constexpr std::size_t kMinRows = 5;
+        static constexpr std::size_t kMinRows = 4;
         std::size_t rows_count                = kMinRows + current_level_;
-        std::size_t columns_count             = 16;
+        std::size_t columns_count             = 8;
         std::size_t max_health = std::min(1 + current_level_, kMaxBlockHealth);
         std::size_t min_health =
             std::max<std::size_t>(1, std::max<int>(0, -3 + current_level_));
@@ -226,10 +232,11 @@ class TGame {
                 std::size_t health = dist(gen);
                 world_.create<TPosition, TBlock>(
                     TPosition{.pos = pos},
-                    TBlock{.size = size, .health = min_health}
+                    TBlock{.size = size, .health = health}
                 );
             }
         }
+        world_.commit();
     }
 
     void create_ball() {
@@ -433,7 +440,6 @@ class TGame {
                 ball_platform_sound_->play();
             }
         }
-        world_.commit();
     }
 
     void resolve_collisions(float dt) {
