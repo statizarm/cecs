@@ -10,4 +10,5 @@ add_subdirectory(tests)
 add_subdirectory(examples)
 
 target_link_libraries(main_test cecs)
+target_link_libraries(ant cecs)
 target_link_libraries(arcanoid cecs)
