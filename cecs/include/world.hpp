@@ -549,6 +549,15 @@ class TWorldImpl<
         commit();
     }
 
+    std::size_t size() {
+        return TKnownArchetypes::bind_functor([&]<typename... TArchetype>() {
+            return (
+                std::get<TMatchedContainer<TArchetype>>(containers_).size() +
+                ...
+            );
+        })();
+    }
+
   private:
     inline void update_snapshots() {
         ((std::get<TContainerSnapshot<TAll>>(snapshots_) =

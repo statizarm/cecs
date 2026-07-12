@@ -19,6 +19,13 @@ add_executable(
   src/main.cpp
 )
 
+file(
+  COPY
+  assets
+  DESTINATION
+  ${CMAKE_CURRENT_BINARY_DIR}
+)
+
 target_link_libraries(
   ant
   SFML::Graphics
