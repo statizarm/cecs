@@ -69,3 +69,11 @@ auto [counter, sum] = world.select<std::size_t>().run_batched(
     }
 );
 ```
+
+## Примеры с визуализацией
+
+### Визуализация орущих букашек
+
+Оригинальная идея: https://share.google/Uqpw3GTkn8SNo5zoA
+
+![Demo](./misc/screaming_bugs.gif)
