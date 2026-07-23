@@ -172,9 +172,16 @@ class TWorldImpl<
   public:
     using TAllArchetypes   = TTypeList<TAll...>;
     using TKnownArchetypes = TTypeList<TKnown...>;
+
     using TThis =
         TWorldImpl<TAllArchetypes, TKnownArchetypes, buffer_size, TAllocator>;
     using TIterator = TWorldIterator<TThis>;
+
+    using TWholeWorld =
+        TWorldImpl<TAllArchetypes, TAllArchetypes, buffer_size, TAllocator>;
+    using TIDComponent = TEntityIDComponent<TWholeWorld>;
+
+    // using TAllEntity = TWholeWorldIterator::value_type;
 
   private:
     template <
@@ -182,6 +189,7 @@ class TWorldImpl<
         typename>
     friend class TWorldImpl;
     friend TIterator;
+    friend TIDComponent;
 
   public:
     TWorldImpl()
@@ -199,6 +207,14 @@ class TWorldImpl<
     }
     TIterator end() {
         return TIterator(this);
+    }
+
+    auto& get(TEntityID id) {
+        if constexpr (TAllArchetypes::template eq<TKnownArchetypes>::value) {
+            return *static_cast<TAllEntity*>(id);
+        } else {
+            return get_whole_world().get(id);
+        }
     }
 
     auto& get_whole_world() {
@@ -230,8 +246,8 @@ class TWorldImpl<
             TMatchedContainer<TTypeList<std::decay_t<TT>...>>;
 
         auto& container = std::get<TContainerType>(containers_);
-        return TEntity<typename TContainerType::ref, TThis>(
-            container.create(), this
+        return TEntity<typename TContainerType::ref, TWholeWorld>(
+            container.create(), &get_whole_world()
         );
     }
 
@@ -244,9 +260,16 @@ class TWorldImpl<
             TMatchedContainer<TTypeList<std::decay_t<TT>...>>;
 
         auto& container = std::get<TContainerType>(containers_);
-        auto res        = TEntity<typename TContainerType::ref, TThis>(
-            container.create(), this
+        auto res        = TEntity<typename TContainerType::ref, TWholeWorld>(
+            container.create(), &get_whole_world()
         );
+        auto& id_component      = res.template get<TIDComponent>();
+        auto ref                = entity_id_container_.create();
+        auto& all_entity        = ref.template get<TAllEntity>();
+        all_entity              = res;
+        id_component.entity_id_ = reinterpret_cast<TEntityID>(&all_entity);
+        id_component.world_     = this;
+        id_component.container_ = static_cast<void*>(&container);
         ((res.template get<TT>() = std::forward<TT>(args)), ...);
         return res;
     }
@@ -272,12 +295,22 @@ class TWorldImpl<
             std::same_as<TSourceContainerType, TDestinationContainerType>
         ) {
             return entity;
-        } else {
+        } else if constexpr (
+            TAllArchetypes::template eq<TKnownArchetypes>::value
+        ) {
             auto& container = std::get<TDestinationContainerType>(containers_);
             auto ref        = container.create();
+            auto& id_component      = ref.template get<TIDComponent>();
+            id_component.entity_id_ = kNullEntityID;
+            id_component.world_     = this;
+            id_component.container_ = static_cast<void*>(&container);
             ref.replace_from(std::move(entity.ref_));
             destroy(entity);
             return TEntity<decltype(ref), TThis>(ref, this);
+        } else {
+            get_whole_world().template move_to<TFrom, TDestinationArchetype>(
+                entity
+            );
         }
     }
 
@@ -289,6 +322,7 @@ class TWorldImpl<
         }
 
         ((std::get<TContainer<TAll>>(containers_).commit()), ...);
+        entity_id_container_.commit();
         update_snapshots();
         return true;
     }
@@ -330,7 +364,11 @@ class TWorldImpl<
                     for (auto it = snapshot.first; it != snapshot.second;
                          ++it) {
                         if (!it.erased()) {
-                            std::forward<TFunc>(func)(TEntity(*it, this));
+                            std::forward<TFunc>(func)(
+                                TEntity<decltype(*it), TWholeWorld>(
+                                    *it, &get_whole_world()
+                                )
+                            );
                         }
                     }
                 }(std::get<TContainerSnapshot<TArchetype>>(snapshots_)),
@@ -372,9 +410,39 @@ class TWorldImpl<
          ...);
     }
 
+    void unlink_entity(TEntityID id) {
+        static_cast<TAllEntity*>(id)->destroy();
+        entity_id_container_.destroy(
+            entity_id_container_.get_ref_by_ptr(static_cast<TAllEntity*>(id))
+        );
+    }
+
+    void relink_entity(TEntityID id, void* container, TIDComponent* component) {
+        if constexpr (TKnownArchetypes::template eq<TAllArchetypes>::value) {
+            (try_relink_for_container(
+                 id, static_cast<TContainer<TAll>*>(container), component
+             ),
+             ...);
+        } else {
+            get_whole_world().relink_entity(id, container, component);
+        }
+    }
+
+    template <typename TCon>
+    void try_relink_for_container(
+        TEntityID id, TCon* container, TIDComponent* component
+    ) {
+        static_assert(TContainersList::template has<TCon>::value);
+        if (&std::get<TCon>(containers_) == container) {
+            auto ref = container->get_ref_by_ptr(component);
+            *static_cast<TAllEntity*>(id) = TEntity(ref, &get_whole_world());
+        }
+    }
+
   private:
     template <COneOf<TAll...> TT>
-    using TContainer = TSOAContainer<buffer_size, TT, TAllocator>;
+    using TContainer = TSOAContainer<
+        buffer_size, typename TT::template add<TIDComponent>::type, TAllocator>;
 
     template <COneOf<TAll...> TT>
     using TContainerSnapshot = std::pair<
@@ -386,27 +454,45 @@ class TWorldImpl<
     using TContainersSnapshot = std::tuple<TContainerSnapshot<TAll>...>;
 
     template <CIsInstanceOf<TTypeList> TArchetype>
-        requires(TArchetype::template eq<TAll>::value || ...)
-    using TMatchedArchetypes =
-        typename TFilter<TArchetype::template eq, TTypeList<TAll...>>::type;
+        requires(TArchetype::template del<TIDComponent>::type::template eq<
+                     TAll>::value ||
+                 ...)
+    using TMatchedArchetypes = typename TFilter<
+        TArchetype::template del<TIDComponent>::type::template eq,
+        TTypeList<TAll...>>::type;
 
     template <CIsInstanceOf<TTypeList> TArchetype>
-        requires(TArchetype::template eq<TAll>::value || ...)
+        requires(TArchetype::template del<TIDComponent>::type::template eq<
+                     TAll>::value ||
+                 ...)
     using TMatchedArchetype =
         typename TMatchedArchetypes<TArchetype>::template head<>::type;
 
     template <CIsInstanceOf<TTypeList> TArchetype>
-        requires(TArchetype::template eq<TAll>::value || ...)
+        requires(TArchetype::template del<TIDComponent>::type::template eq<
+                     TAll>::value ||
+                 ...)
     using TMatchedContainer = TContainer<TMatchedArchetype<TArchetype>>;
 
     template <CIsInstanceOf<TTypeList> TArchetype>
-        requires(TArchetype::template eq<TAll>::value || ...)
+        requires(TArchetype::template del<TIDComponent>::type::template eq<
+                     TAll>::value ||
+                 ...)
     using TMatchedContainerSnapshot =
         TContainerSnapshot<TMatchedArchetype<TArchetype>>;
+
+    using TAllEntity = TVariantEntity<TEntity<
+        typename TContainer<TAll>::ref,
+        TWorldImpl<
+            TAllArchetypes, TAllArchetypes, buffer_size, TAllocator>>...>;
+
+    using TEntityIDContainer =
+        TSOAContainer<buffer_size, TTypeList<TAllEntity>, TAllocator>;
 
   private:
     TContainers containers_;
     TContainersSnapshot snapshots_;
+    TEntityIDContainer entity_id_container_;
     bool iterating_ = false;
 };
 

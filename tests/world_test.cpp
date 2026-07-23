@@ -538,3 +538,17 @@ TEST(TWorld, TTestCommitInsideIteration) {
     });
     EXPECT_TRUE(world.commit());
 }
+
+TEST(TWorld, TTestGetEntityByID) {
+    using TWorld =
+        NCecs::TWorld<NCecs::TTypeList<NCecs::TTypeList<std::size_t>>>;
+    TWorld world;
+
+    auto e     = world.create<std::size_t>(10);
+    auto var_e = world.get(e.id());
+
+    EXPECT_EQ(e.template get<std::size_t>(), var_e.template get<std::size_t>());
+
+    e.template get<std::size_t>() = 100500;
+    EXPECT_EQ(var_e.template get<std::size_t>(), 100500);
+}

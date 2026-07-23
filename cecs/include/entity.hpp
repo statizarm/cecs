@@ -6,15 +6,94 @@
 
 namespace NCecs {
 
+using TEntityID                          = void*;
+static constexpr TEntityID kNullEntityID = nullptr;
+
+template <typename TRef, typename TWorld>
+class TEntity;
+
+template <typename TWorld>
+class TEntityIDComponent {
+    template <
+        CIsInstanceOf<TTypeList> TAll, CIsInstanceOf<TTypeList> TKnown,
+        std::size_t buffer_size, typename TAllocator>
+    friend class TWorldImpl;
+
+    friend TWorld;
+
+    template <typename, typename>
+    friend class TEntity;
+
+  public:
+    using TThis = TEntityIDComponent<TWorld>;
+
+  public:
+    TEntityIDComponent()
+        : TEntityIDComponent(kNullEntityID, nullptr, nullptr) {
+    }
+
+    TEntityIDComponent(const TThis&) = delete;
+    TEntityIDComponent(TThis&& other) {
+        *this = std::move(other);
+    }
+
+    TThis& operator=(const TThis&) = delete;
+    TThis& operator=(TThis&& other) {
+        std::swap(entity_id_, other.entity_id_);
+
+        relink();
+        other.destroy();
+        return *this;
+    }
+
+    ~TEntityIDComponent() {
+        destroy();
+    }
+
+  private:
+    TEntityIDComponent(TEntityID entity_id, TWorld* world, void* container)
+        : entity_id_(entity_id), world_(world), container_(container) {
+    }
+
+    TEntityIDComponent(TWorld* world, void* container)
+        : TEntityIDComponent(kNullEntityID, world, container) {
+    }
+
+  private:
+    void relink() {
+        if (entity_id_ != kNullEntityID) {
+            world_->relink_entity(entity_id_, container_, this);
+        }
+    }
+
+    void destroy() {
+        if (entity_id_ != kNullEntityID) {
+            world_->unlink_entity(entity_id_);
+            entity_id_ = kNullEntityID;
+        }
+    }
+
+  private:
+    TEntityID entity_id_;
+    TWorld* world_;
+    void* container_;
+};
+
 template <typename TRef, typename TWorld>
 class TEntity {
+    template <
+        CIsInstanceOf<TTypeList> TAll, CIsInstanceOf<TTypeList> TKnown,
+        std::size_t buffer_size, typename TAllocator>
+    friend class TWorldImpl;
+
     friend TWorld;
     template <typename>
     friend class TWorldIterator;
 
   public:
-    using TThis      = TEntity<TRef, TWorld>;
-    using TArchetype = typename TRef::TAvailableTypes;
+    using TThis        = TEntity<TRef, TWorld>;
+    using TArchetype   = typename TRef::TAvailableTypes;
+    using TIDComponent = TEntityIDComponent<TWorld>;
 
   public:
     TEntity()                   = delete;
@@ -28,6 +107,12 @@ class TEntity {
     template <typename T>
     constexpr bool has() const {
         return TArchetype::template has<T>::value;
+    }
+
+    TEntityID id() const
+        requires(TArchetype::template has<TIDComponent>::value)
+    {
+        return ref_.template get<TIDComponent>().entity_id_;
     }
 
     template <typename T>
@@ -113,6 +198,12 @@ class TVariantEntity {
         );
     }
 
+    TEntityID id() const {
+        return std::visit(
+            [](const auto& e) -> TEntityID { return e.id(); }, storage_
+        );
+    }
+
     template <typename T>
     T& get() {
         return std::visit(
@@ -180,7 +271,7 @@ class TVariantEntity {
     }
 
     void destroy() {
-        std::visit([](auto& e) -> void { e.destroy(); });
+        std::visit([](auto& e) -> void { e.destroy(); }, storage_);
     }
 
     bool valid() {

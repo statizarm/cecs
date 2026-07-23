@@ -7,6 +7,7 @@
 
 #include "allocator.hpp"
 #include "buffer_layout.hpp"
+#include "gmock/gmock.h"
 #include "type_list.hpp"
 #include "utils.hpp"
 
@@ -203,9 +204,18 @@ class TSOAContainer {
     }
 
     void destroy(ref& elem) {
-        THeader* header = find_header_by_ptr(elem.ptr_);
-        header->erased.set(elem.position_);
-        elem = kInvalidRef;
+        if (elem != kInvalidRef) {
+            THeader* header = find_header_by_ptr(elem.ptr_);
+            header->erased.set(elem.position_);
+            elem = kInvalidRef;
+        }
+    }
+
+    void destroy(ref&& elem) {
+        if (elem != kInvalidRef) {
+            THeader* header = find_header_by_ptr(elem.ptr_);
+            header->erased.set(elem.position_);
+        }
     }
 
     void commit() {
@@ -225,6 +235,18 @@ class TSOAContainer {
         }
         first_free_ = first_bad.header_;
         size_       = first_bad.position_;
+    }
+
+    template <typename TT>
+        requires(TAvailableTypes::template has<TT>::value)
+    ref get_ref_by_ptr(TT* ptr) {
+        THeader* header = find_header_by_ptr(ptr);
+        std::size_t position =
+            ((reinterpret_cast<std::size_t>(ptr) &
+              (kBufferWithHeaderSize - 1)) -
+             kHeaderSize - buffer_layout::template offset<TT>::value) /
+            sizeof(TT);
+        return ref(header, position);
     }
 
     TIterator begin() {
