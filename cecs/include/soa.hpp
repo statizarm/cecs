@@ -3,6 +3,7 @@
 #include <bit>
 #include <bitset>
 #include <iterator>
+#include <type_traits>
 
 #include "allocator.hpp"
 #include "buffer_layout.hpp"
@@ -47,10 +48,11 @@ class TSOAContainer {
     class TIterator;
 
   public:
-    using TThis         = TSOAContainer<buffer_size, T, TAllocator>;
-    using buffer_layout = TBufferLayout<kBufferSize, T>;
-    using ref           = TSOAElementRef<buffer_layout, TThis>;
-    using iterator      = TIterator;
+    using TThis           = TSOAContainer<buffer_size, T, TAllocator>;
+    using buffer_layout   = TBufferLayout<kBufferSize, T>;
+    using ref             = TSOAElementRef<buffer_layout, TThis>;
+    using iterator        = TIterator;
+    using TAvailableTypes = typename buffer_layout::types;
 
   public:
     static constexpr TSOAElementRef<buffer_layout, TThis> kInvalidRef{
@@ -172,7 +174,7 @@ class TSOAContainer {
 
     ~TSOAContainer() {
         for (auto elem : *this) {
-            elem.deinit(typename buffer_layout::types{});
+            elem.deinit(TAvailableTypes{});
         }
         for (auto* header = buffer_.next; header != &buffer_;) {
             auto* next = header->next;
@@ -190,7 +192,7 @@ class TSOAContainer {
 
         auto res = get_ref_from_header(header, free_index);
 
-        res.init(typename buffer_layout::types{});
+        res.init(TAvailableTypes{});
 
         ++size_;
         if (size_ % buffer_layout::kMaxElements == 0) {
@@ -240,23 +242,9 @@ class TSOAContainer {
   private:
     void erase(TIterator first_bad, TIterator last_good) {
         if (first_bad != last_good) {
-            if constexpr (
-                TTypeListTraits<
-                    typename buffer_layout::types>::is_move_assignable::value
-            ) {
-                (*first_bad).move_from(*last_good);
-                (*last_good).deinit(typename buffer_layout::types{});
-            } else if constexpr (
-                TTypeListTraits<
-                    typename buffer_layout::types>::is_copy_assignable::value
-            ) {
-                (*first_bad).copy_from(*last_good);
-                (*last_good).deinit(typename buffer_layout::types{});
-            } else {
-                static_assert(
-                    false, "Types must be move assignable or copy assignable"
-                );
-            }
+            (*first_bad).replace_from(*last_good);
+            (*last_good).deinit(TAvailableTypes{});
+
             first_bad.set_erased(false);
             last_good.set_erased(true);
         }
@@ -342,53 +330,49 @@ class TSOAElementRef {
         );
     }
 
-    template <CIsInstanceOf<TSOAElementRef> TOther>
+    template <typename TOther>
         requires(
-            (TOther::TAvailableTypes::template is_sub<TAvailableTypes>::value ||
+            CIsInstanceOf<std::decay_t<TOther>, TSOAElementRef> &&
+            (std::decay_t<TOther>::TAvailableTypes::template is_sub<
+                 TAvailableTypes>::value ||
              TAvailableTypes::template is_sub<
-                 typename TOther::TAvailableTypes>::value) &&
-            (TTypeListTraits<
-                 typename TOther::TAvailableTypes>::is_move_assignable::value ||
-             TTypeListTraits<
-                 typename TOther::TAvailableTypes>::is_copy_assignable::value)
+                 typename std::decay_t<TOther>::TAvailableTypes>::value) &&
+            (TTypeListTraits<typename std::decay_t<TOther>::TAvailableTypes>::
+                 is_copy_assignable_constructible::value ||
+             TTypeListTraits<typename std::decay_t<TOther>::TAvailableTypes>::
+                 is_move_assignable_constructible::value)
         )
-    void replace_from(TOther& other) {
+    void replace_from(TOther&& other) {
         using TReplaceTypes = std::conditional_t<
-            TOther::TAvailableTypes::template is_sub<TAvailableTypes>::value,
-            typename TOther::TAvailableTypes,
+            std::decay_t<TOther>::TAvailableTypes::template is_sub<
+                TAvailableTypes>::value,
+            typename std::decay_t<TOther>::TAvailableTypes,
             TAvailableTypes>;
 
-        if constexpr (
-            TTypeListTraits<
-                typename TOther::TAvailableTypes>::is_move_assignable::value
-        ) {
-            if constexpr (std::same_as<TOther, TThis>) {
-                move_from(other);
-            } else {
-                move_from_impl(other, TReplaceTypes{});
-            }
-        } else if constexpr (
-            TTypeListTraits<
-                typename TOther::TAvailableTypes>::is_copy_assignable::value
-        ) {
-            if constexpr (std::same_as<TOther, TThis>) {
-                copy_from(other);
-            } else {
-                copy_from_impl(other, TReplaceTypes{});
-            }
-        }
-    }
-
-    void copy_from(TThis other)
-        requires(TTypeListTraits<TAvailableTypes>::is_copy_assignable::value)
-    {
-        copy_from_impl(other, TAvailableTypes{});
-    }
-
-    void move_from(TThis other)
-        requires(TTypeListTraits<TAvailableTypes>::is_move_assignable::value)
-    {
-        move_from_impl(other, TAvailableTypes{});
+        TReplaceTypes::bind_functor([]<typename... T>(TThis* lhs, auto&& rhs) {
+            (
+                [](TThis* lhs, auto&& rhs) {
+                    if constexpr (
+                        std::is_rvalue_reference_v<decltype(other)> &&
+                        (std::is_move_constructible_v<T> ||
+                         std::is_move_assignable_v<T>)
+                    ) {
+                        if constexpr (std::is_move_assignable_v<T>) {
+                            lhs->get<T>() = std::move(rhs.template get<T>());
+                        } else {
+                            new (&lhs->get<T>())
+                                T(std::move(rhs.template get<T>()));
+                        }
+                    } else {
+                        if constexpr (std::is_copy_assignable_v<T>) {
+                            lhs->get<T>() = rhs.template get<T>();
+                        } else if constexpr (std::is_copy_constructible_v<T>) {
+                            new (&lhs->get<T>()) T(rhs.template get<T>());
+                        }
+                    }
+                }(lhs, std::forward<TOther>(rhs)),
+                ...);
+        })(this, std::forward<TOther>(other));
     }
 
     bool operator==(const TThis& other) const {
@@ -408,7 +392,7 @@ class TSOAElementRef {
     template <typename... T>
         requires(TTypeList<T...>::template is_sub<TAvailableTypes>::value)
     void init(TTypeList<T...>) {
-        (new (&get<T>()) T(), ...);
+        (sub_init<T>(), ...);
     }
 
     template <typename... T>
@@ -417,16 +401,13 @@ class TSOAElementRef {
         (get<T>().~T(), ...);
     }
 
-    template <CIsInstanceOf<TSOAElementRef> TOther, typename... T>
-        requires(TTypeList<T...>::template is_sub<TAvailableTypes>::value)
-    void copy_from_impl(TOther other, TTypeList<T...>) {
-        ((get<T>() = other.template get<T>()), ...);
-    }
-
-    template <CIsInstanceOf<TSOAElementRef> TOther, typename... T>
-        requires(TTypeList<T...>::template is_sub<TAvailableTypes>::value)
-    void move_from_impl(TOther other, TTypeList<T...>) {
-        ((get<T>() = std::move(other.template get<T>())), ...);
+    template <typename T>
+        requires(TAvailableTypes::template has<T>::value)
+    void sub_init() {
+        // FIXME
+        if constexpr (requires() { T(); }) {
+            new (&get<T>()) T();
+        }
     }
 
   private:

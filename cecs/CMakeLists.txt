@@ -9,6 +9,7 @@ set(
     INCLUDES
     include/cecs/allocator.hpp
     include/cecs/buffer_layout.hpp
+    include/cecs/entity.hpp
     include/cecs/soa.hpp
     include/cecs/type_list.hpp
     include/cecs/utils.hpp

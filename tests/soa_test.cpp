@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <type_traits>
+
 #include "buffer_layout.hpp"
 
 template <typename... T>
@@ -92,7 +94,7 @@ TEST(TSOAElementTest, TTestAccess) {
     EXPECT_EQ(TExStruct::destroyed, 2);
 }
 
-TEST(TSOAElementTest, TTestCopyFrom) {
+TEST(TSOAElementTest, TTestReplaceFrom) {
     using TAllocator = TTestAllocator<int, short>;
     using TRef       = TAllocator::TVal;
     TAllocator allocator;
@@ -114,12 +116,102 @@ TEST(TSOAElementTest, TTestCopyFrom) {
     EXPECT_EQ(val[1].get<int>(), 0);
     EXPECT_EQ(val[1].get<short>(), 0);
 
-    val[1].copy_from(val[0]);
+    val[1].replace_from(val[0]);
 
     EXPECT_EQ(val[1].get<int>(), 42);
     EXPECT_EQ(val[1].get<short>(), 16);
     EXPECT_EQ(val[0].get<int>(), 42);
     EXPECT_EQ(val[0].get<short>(), 16);
+}
+
+struct TCStruct {
+    std::size_t val = 0;
+    TCStruct(const TCStruct& other) {
+        val = other.val;
+        ++copy_constructed;
+    }
+    TCStruct(TCStruct&& other) {
+        val = other.val;
+        ++move_constructed;
+    }
+
+    static std::size_t copy_constructed;
+    static std::size_t move_constructed;
+};
+
+std::size_t TCStruct::copy_constructed = 0;
+std::size_t TCStruct::move_constructed = 0;
+
+struct TAStruct {
+    std::size_t val = 0;
+    TAStruct& operator=(const TAStruct& other) {
+        val = other.val;
+        ++copy_assigned;
+        return *this;
+    }
+
+    TAStruct& operator=(TAStruct&& other) {
+        val = other.val;
+        ++move_assigned;
+        return *this;
+    }
+
+    static std::size_t copy_assigned;
+    static std::size_t move_assigned;
+};
+
+std::size_t TAStruct::copy_assigned = 0;
+std::size_t TAStruct::move_assigned = 0;
+
+TEST(TSOAElementTest, TTestConstructionDestructionWithReplace) {
+    using TAllocator = TTestAllocator<TCStruct, TAStruct>;
+    using TRef       = TAllocator::TVal;
+    TAllocator allocator;
+    TRef val[] = {
+        allocator.get(),
+        allocator.get(),
+    };
+
+    val[1].get<TCStruct>().val = 100;
+    val[1].get<TAStruct>().val = 200;
+
+    static_assert(
+        std::is_copy_constructible<TCStruct>::value &&
+        std::is_move_constructible<TCStruct>::value
+    );
+
+    static_assert(
+        std::is_copy_assignable<TAStruct>::value &&
+        std::is_move_assignable<TAStruct>::value
+    );
+    val[0].replace_from(val[1]);
+
+    EXPECT_EQ(TAStruct::copy_assigned, 1);
+    EXPECT_EQ(TAStruct::move_assigned, 0);
+
+    EXPECT_EQ(TCStruct::copy_constructed, 1);
+    EXPECT_EQ(TCStruct::move_constructed, 0);
+
+    EXPECT_EQ(val[0].get<TCStruct>().val, 100);
+    EXPECT_EQ(val[0].get<TAStruct>().val, 200);
+    EXPECT_EQ(val[1].get<TCStruct>().val, 100);
+    EXPECT_EQ(val[1].get<TAStruct>().val, 200);
+
+    val[0].get<TCStruct>().val = 10;
+    val[0].get<TAStruct>().val = 20;
+
+    val[1].replace_from(std::move(val[0]));
+
+    EXPECT_EQ(TAStruct::copy_assigned, 1);
+    EXPECT_EQ(TAStruct::move_assigned, 1);
+
+    EXPECT_EQ(TCStruct::copy_constructed, 1);
+    EXPECT_EQ(TCStruct::move_constructed, 1);
+
+    EXPECT_EQ(val[0].get<TCStruct>().val, 10);
+    EXPECT_EQ(val[0].get<TAStruct>().val, 20);
+    EXPECT_EQ(val[1].get<TCStruct>().val, 10);
+    EXPECT_EQ(val[1].get<TAStruct>().val, 20);
 }
 
 TEST(TTestAllocator, TTestAlignedAlloc) {

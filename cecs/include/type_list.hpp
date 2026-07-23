@@ -308,6 +308,15 @@ struct TTypeListTraits<TTypeList<T...>> {
 
     using is_move_assignable    = TTraitWrapper<std::is_move_assignable>;
     using is_move_constructible = TTraitWrapper<std::is_move_constructible>;
+
+    using is_copy_move_assignable = TTraitWrapper<
+        TOr<std::is_copy_assignable, std::is_move_assignable>::template op>;
+    using is_copy_move_constructible       = TTraitWrapper<TOr<
+        std::is_copy_constructible, std::is_move_constructible>::template op>;
+    using is_copy_assignable_constructible = TTraitWrapper<
+        TOr<std::is_copy_assignable, std::is_copy_constructible>::template op>;
+    using is_move_assignable_constructible = TTraitWrapper<
+        TOr<std::is_move_assignable, std::is_move_constructible>::template op>;
 };
 
 }  // namespace NCecs
