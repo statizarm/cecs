@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <type_traits>
 
 #include "type_list.hpp"
 #include "utils.hpp"
@@ -29,8 +30,9 @@ struct TBufferLayoutImpl<size, TTypeList<T...>> {
     struct TOffset;
 
   public:
+    static constexpr std::size_t kBufferSize  = size;
     static constexpr std::size_t kChunkSize   = (sizeof(T) + ...);
-    static constexpr std::size_t kMaxElements = size / kChunkSize;
+    static constexpr std::size_t kMaxElements = kBufferSize / kChunkSize;
     static constexpr std::size_t kAlign       = std::max({alignof(T)...});
 
     template <COneOf<T...> TT>
@@ -65,5 +67,49 @@ struct TIsInstanceOfLayout<TBufferLayout<size, T>> : public std::true_type {};
 
 template <typename T>
 concept CLayout = TIsInstanceOfLayout<T>::value;
+
+template <CLayout TLayout, typename... T>
+    requires(TLayout::types::template has<T>::value && ...)
+struct TBufferImpl;
+
+template <CLayout TLayout>
+struct TBufferImpl<TLayout> {
+  public:
+    template <typename TT>
+    void get(std::size_t) const {
+    }
+};
+
+template <CLayout TLayout, typename T, typename... TRest>
+struct TBufferImpl<TLayout, T, TRest...> : TBufferImpl<TLayout, TRest...> {
+  private:
+    using TBase = TBufferImpl<TLayout, TRest...>;
+
+  public:
+    template <typename TT>
+    TT& get(std::size_t idx) {
+        if constexpr (std::same_as<std::decay_t<TT>, std::decay_t<T>>) {
+            return buf_[idx];
+        } else {
+            return static_cast<TBase*>(this)->template get<TT>(idx);
+        }
+    }
+
+    template <typename TT>
+    const TT& get(std::size_t idx) const {
+        if constexpr (std::same_as<std::decay_t<TT>, std::decay_t<T>>) {
+            return buf_[idx];
+        } else {
+            return static_cast<TBase*>(this)->template get<TT>(idx);
+        }
+    }
+
+  private:
+    T buf_[TLayout::kMaxElements];
+};
+
+template <CLayout TLayout>
+using TBuffer = TLayout::types::template bind_type<
+    TPartialTemplate<TBufferImpl, TLayout>::template type>;
 
 }  // namespace NCecs

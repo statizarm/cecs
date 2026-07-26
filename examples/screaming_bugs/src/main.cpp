@@ -1,13 +1,24 @@
+#include <EASTL/fixed_vector.h>
+#include <EASTL/hash_map.h>
+#include <EASTL/hash_set.h>
+#include <EASTL/heap.h>
+#include <EASTL/priority_queue.h>
+#include <EASTL/queue.h>
+
 #include <SFML/Graphics/CircleShape.hpp>
 #include <SFML/Graphics/PrimitiveType.hpp>
 #include <SFML/Graphics/RenderWindow.hpp>
 #include <SFML/Graphics/Vertex.hpp>
 #include <SFML/System/Angle.hpp>
 #include <SFML/System/Vector2.hpp>
+#include <SFML/Window/Event.hpp>
 #include <SFML/Window/Keyboard.hpp>
 #include <SFML/Window/VideoMode.hpp>
+#include <future>
+#include <mutex>
 #include <random>
 #include <ranges>
+#include <thread>
 
 #include "world.hpp"
 
@@ -34,9 +45,9 @@ static constexpr const std::array kSpotsColors = {kColors[1], kColors[3]};
 
 static constexpr std::array kBugTypes = {std::size_t{0}, std::size_t{1}};
 
-static constexpr std::size_t kMaxBugsCount       = 1 << 11;
-static constexpr std::size_t kDefaultBugVelocity = 20.f;
-static constexpr std::size_t kHearRadius         = 7.f;
+static constexpr std::size_t kMaxBugsCount       = 1 << 14;
+static constexpr std::size_t kDefaultBugVelocity = 10.f;
+static constexpr float kHearRadius               = 2.5f;
 static constexpr float kDefaultSpotShapeRadius   = 5.f;
 
 struct TBug {
@@ -53,7 +64,7 @@ struct TVelocity {
     float vel;
 };
 struct TNotification {
-    sf::Vector2f dst;
+    NCecs::TEntityID from;
     float dist;
 };
 struct TNotifiedTag {};
@@ -70,6 +81,16 @@ using TBugWorld = NCecs::TWorld<
 >;
 // clang-format on
 
+namespace eastl {
+template <>
+struct hash<sf::Vector2i> {
+    std::size_t operator()(const sf::Vector2i& v) const {
+        return static_cast<std::size_t>(v.x) << 32 |
+               static_cast<std::size_t>(v.y);
+    }
+};
+}  // namespace eastl
+
 class TGame {
   public:
     TGame(sf::RenderWindow* window)
@@ -82,17 +103,29 @@ class TGame {
 
         spawn_spots();
         spawn_bugs();
+        init_cache();
     }
 
     void update(float dt) {
+        std::cout << 1 / dt << std::endl;
+        static constexpr float kDt = 0.005;
+        notify_bug(dt);
+
+        while (dt > kDt) {
+            update_bug_direction(kDt);
+            move(kDt);
+
+            dt -= kDt;
+        }
         update_bug_direction(dt);
         move(dt);
-        notify_bug(dt);
-        draw(dt);
+
+        draw();
     }
 
     void deinit() {
         world_.clear();
+        grid_cache_.clear();
     }
 
     void handle_event(const sf::Event& event) {
@@ -106,19 +139,75 @@ class TGame {
 
   private:
     void move(float dt) {
-        world_.select<TPosition, TVelocity>().run([dt](auto entity) {
+        world_.select<TPosition, TVelocity>().run([this, dt](auto entity) {
             auto& pos       = entity.template get<TPosition>().pos;
             const auto& vel = entity.template get<TVelocity>();
+            auto prev_pos   = pos;
             pos             = pos + vel.dir * vel.vel * dt;
+            update_cache(prev_pos, pos, entity.id());
         });
     }
 
+    sf::Vector2i get_cell(const sf::Vector2f& pos) {
+        return {static_cast<int>(pos.x), static_cast<int>(pos.y)};
+    }
+
+    void init_cache() {
+        world_.select<TPosition>().run([&](auto entity) {
+            const auto& pos = entity.template get<TPosition>().pos;
+            grid_cache_[get_cell(pos)].insert(entity.id());
+        });
+    }
+
+    void update_cache(
+        const sf::Vector2f& prev_pos, const sf::Vector2f& curr_pos,
+        NCecs::TEntityID id
+    ) {
+        sf::Vector2i prev = get_cell(prev_pos);
+        sf::Vector2i curr = get_cell(curr_pos);
+        if (prev == curr) {
+            return;
+        }
+
+        grid_cache_[prev].erase(id);
+        grid_cache_[curr].insert(id);
+    }
+
+    template <typename TF>
+    void for_nearest(sf::Vector2f pos, float radius, TF func) {
+        int32_t up_x = static_cast<int32_t>(pos.x + radius);
+        int32_t up_y = static_cast<int32_t>(pos.y + radius);
+        for (int32_t x = static_cast<int32_t>(pos.x - radius); x <= up_x; ++x) {
+            for (int32_t y = static_cast<int32_t>(pos.y - radius); y <= up_y;
+                 ++y) {
+                if (auto it = grid_cache_.find({x, y});
+                    it != grid_cache_.end()) {
+                    for (auto e_id : it->second) {
+                        world_.get(e_id).call(func);
+                    }
+                }
+            }
+        }
+    }
+
     void notify_bug(float dt) {
+        world_.select<TNotifiedTag>().run([](auto entity) {
+            entity.template del<TNotifiedTag>().template del<TNotification>();
+        });
+        world_.commit();
+
+        using TQueueChunk = std::pair<float, NCecs::TEntityID>;
+        eastl::queue<TQueueChunk, eastl::deque<TQueueChunk>> queue;
+
         world_.select<TSpot, TPosition>().run([&](auto spot_entity) {
             const auto& spot          = spot_entity.template get<TSpot>();
             const auto& spot_position = spot_entity.template get<TPosition>();
-            world_.select<TBug, TPosition, TVelocity>().run(
-                [&](auto bug_entity) {
+            for_nearest(spot_position.pos, kHearRadius, [&](auto bug_entity) {
+                if constexpr (
+                    bug_entity.template has<TPosition>() &&
+                    bug_entity.template has<TBug>() &&
+                    bug_entity.template has<TVelocity>()
+                ) {
                     const auto& bug_position =
                         bug_entity.template get<TPosition>();
                     auto& bug           = bug_entity.template get<TBug>();
@@ -141,65 +230,66 @@ class TGame {
                         !bug_entity.template has<TNotification>()
                     ) {
                         if (dist < kHearRadius) {
-                            bug_entity.template add<TNotifiedTag>()
-                                .template add<TNotification>(
-                                    spot_position.pos, dist
-                                );
+                            auto res = bug_entity.template add<TNotification>(
+                                spot_entity.id(), dist
+                            );
+                            queue.emplace(std::make_pair(dist, res.id()));
                         }
                     }
                 }
-            );
+            });
         });
         world_.commit();
 
-        auto& subworld =
-            world_.select<TBug, TPosition, TNotification, TNotifiedTag>();
-        while (subworld.size()) {
-            subworld.run([&](auto bug_entity) {
-                const auto& bug_pos  = bug_entity.template get<TPosition>().pos;
-                const auto& bug_type = bug_entity.template get<TBug>().bug_type;
-                const auto& bug_notification =
-                    bug_entity.template get<TNotification>();
-                world_.select<TBug, TPosition>().run([&](auto entity) {
-                    if constexpr (!entity.template has<TNotifiedTag>()) {
-                        const auto& bug = entity.template get<TBug>();
-                        if (bug.bug_type != bug_type) {
-                            return;
-                        }
-                        const auto& pos = entity.template get<TPosition>().pos;
-                        auto dist       = (pos - bug_pos).length();
-                        if (dist > kHearRadius) {
-                            return;
-                        }
+        while (!queue.empty()) {
+            auto [curr_dist, curr_bug_id] = queue.front();
+            queue.pop();
 
-                        float curr_dist = bug_notification.dist + dist + 1.f;
-                        if constexpr (entity.template has<TNotification>()) {
-                            curr_dist =
-                                entity.template get<TNotification>().dist;
+            world_.get(curr_bug_id).call([&](auto curr_bug) {
+                if constexpr (
+                    curr_bug.template has<TPosition>() &&
+                    curr_bug.template has<TBug>() &&
+                    !curr_bug.template has<TNotifiedTag>()
+                ) {
+                    const auto& curr_pos =
+                        curr_bug.template get<TPosition>().pos;
+                    const auto bug_type =
+                        curr_bug.template get<TBug>().bug_type;
+                    for_nearest(curr_pos, kHearRadius, [&](auto entity) {
+                        if constexpr (
+                            !entity.template has<TNotifiedTag>() &&
+                            entity.template has<TBug>() &&
+                            entity.template has<TPosition>()
+                        ) {
+                            const auto& bug = entity.template get<TBug>();
+                            if (bug.bug_type != bug_type) {
+                                return;
+                            }
+                            const auto& pos =
+                                entity.template get<TPosition>().pos;
+                            auto dist        = (pos - curr_pos).length();
+                            float total_dist = curr_dist + dist;
+                            if constexpr (
+                                entity.template has<TNotification>()
+                            ) {
+                                if (entity.template get<TNotification>().dist <
+                                    total_dist) {
+                                    return;
+                                }
+                            }
+                            if (dist <= kHearRadius) {
+                                auto res = entity.template add<TNotification>(
+                                    curr_bug_id, total_dist
+                                );
+                                queue.emplace(total_dist, res.id());
+                            }
                         }
-                        dist += bug_notification.dist;
-                        if (dist < curr_dist) {
-                            std::array verts = {
-                                sf::Vertex(pos, kBugsColors[bug.bug_type]),
-                                sf::Vertex(bug_pos, kBugsColors[bug.bug_type])
-                            };
-                            window_->draw(
-                                verts.data(),
-                                verts.size(),
-                                sf::PrimitiveType::Lines
-                            );
-
-                            entity.template add<TNotification>()
-                                .template add<TNotifiedTag>()
-                                .template get<TNotification>() =
-                                TNotification{.dst = bug_pos, .dist = dist};
-                        }
-                    }
-                });
-                bug_entity.template del<TNotifiedTag>();
+                    });
+                    curr_bug.template add<TNotifiedTag>();
+                }
             });
-            subworld.commit();
         }
+        world_.commit();
     }
 
     void update_bug_direction(float dt) {
@@ -230,19 +320,36 @@ class TGame {
                               .normalized();
             } else if constexpr (entity.template has<TNotification>()) {
                 const auto& notification = entity.template get<TNotification>();
-                if ((notification.dst - position.pos).length() < vel.vel * dt) {
+                const auto& dst =
+                    world_.get(notification.from).template get<TPosition>().pos;
+                if ((dst - position.pos).length() < vel.vel * dt) {
                     entity.template del<TNotification>();
                 } else {
-                    vel.dir = (notification.dst - position.pos).normalized();
+                    vel.dir = (dst - position.pos).normalized();
                 }
             }
         });
         world_.commit();
     }
 
-    void draw(float dt) {
+    void draw() {
         world_.select<TPosition>().run([&](auto entity) {
             const auto& pos = entity.template get<TPosition>();
+            if constexpr (
+                entity.template has<TBug>() &&
+                entity.template has<TNotifiedTag>() &&
+                entity.template has<TNotification>()
+            ) {
+                const auto& bug          = entity.template get<TBug>();
+                const auto& notification = entity.template get<TNotification>();
+                const auto& dst =
+                    world_.get(notification.from).template get<TPosition>().pos;
+                sf::Vertex verts[] = {
+                    sf::Vertex{pos.pos, kBugsColors[bug.bug_type]},
+                    sf::Vertex{dst, kBugsColors[bug.bug_type]},
+                };
+                window_->draw(verts, 2, sf::PrimitiveType::Lines);
+            }
             if constexpr (entity.template has<TBug>()) {
                 const auto& bug = entity.template get<TBug>();
                 sf::Vertex vert{pos.pos, kBugsColors[bug.bug_type]};
@@ -293,6 +400,8 @@ class TGame {
     }
 
   private:
+    eastl::hash_map<sf::Vector2i, eastl::hash_set<NCecs::TEntityID>>
+        grid_cache_;
     sf::RenderWindow* window_;
     TBugWorld world_;
     std::mt19937 gen_;
@@ -304,19 +413,37 @@ int main() {
     TGame game(&window);
     game.init();
 
-    clock.restart();
-    while (window.isOpen()) {
-        while (const auto& event = window.pollEvent()) {
-            if (event->is<sf::Event::Closed>()) {
-                window.close();
-            } else {
-                game.handle_event(*event);
+    std::atomic<std::size_t> runable = 1;
+    std::mutex mut;
+    auto fut = std::async(std::launch::async, [&]() {
+        while (runable) {
+            {
+                std::lock_guard lock{mut};
+                game.deinit();
+                game.init();
             }
+            std::this_thread::sleep_for(10s);
         }
+    });
 
-        window.clear(kClearColor);
-        game.update(clock.restart().asSeconds());
+    clock.restart();
+    while (runable) {
+        {
+            std::lock_guard lock{mut};
+            while (const auto& event = window.pollEvent()) {
+                if (event->is<sf::Event::Closed>()) {
+                    window.close();
+                    runable = 0;
+                } else {
+                    game.handle_event(*event);
+                }
+            }
+
+            window.clear(kClearColor);
+            game.update(clock.restart().asSeconds());
+        }
         window.display();
     }
     game.deinit();
+    fut.wait();
 }

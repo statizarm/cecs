@@ -17,7 +17,9 @@ class TTestAllocator {
 
   public:
     TVal get() {
-        return TVal(static_cast<void*>(&memory_[0]), count_++);
+        return TVal(
+            reinterpret_cast<NCecs::TSOA<TLayout>*>(&memory_[0]), count_++
+        );
     }
 
     void init(TVal val) {

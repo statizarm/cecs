@@ -39,9 +39,12 @@ class TEntityIDComponent {
 
     TThis& operator=(const TThis&) = delete;
     TThis& operator=(TThis&& other) {
+        int a = 10;
         std::swap(entity_id_, other.entity_id_);
 
+        a = 20;
         relink();
+        // FIXME: why we have other.entity_id_ != kNullEntityID?
         other.destroy();
         return *this;
     }
@@ -133,9 +136,15 @@ class TEntity {
         if constexpr (TArchetype::template has<T>::value) {
             return *this;
         } else {
+            if (id() == kNullEntityID) {
+                int a = 10;
+            }
             auto res = world_->template move_to<
                 TThis,
                 typename TArchetype::template add<T>::type>(*this);
+            if (res.id() == kNullEntityID) {
+                int a = 10;
+            }
             new (&res.template get<T>()) T(std::forward<TArgs>(args)...);
             return res;
         }
@@ -146,9 +155,17 @@ class TEntity {
         if constexpr (!TArchetype::template has<T>::value) {
             return *this;
         } else {
+            if (id() == kNullEntityID) {
+                int a = 10;
+            }
+
             auto res = world_->template move_to<
                 TThis,
                 typename TArchetype::template del<T>::type>(*this);
+            if (res.id() == kNullEntityID) {
+                int a = 10;
+            }
+
             return res;
         }
     }
@@ -286,6 +303,11 @@ class TVariantEntity {
 
     bool operator!=(const TThis& other) const {
         return !(*this == other);
+    }
+
+    template <typename TFunc>
+    void call(TFunc func) {
+        std::visit(func, storage_);
     }
 
   private:

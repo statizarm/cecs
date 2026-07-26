@@ -305,6 +305,7 @@ class TWorldImpl<
             id_component.world_     = this;
             id_component.container_ = static_cast<void*>(&container);
             ref.replace_from(std::move(entity.ref_));
+            int a = 10;
             destroy(entity);
             return TEntity<decltype(ref), TThis>(ref, this);
         } else {
@@ -322,7 +323,7 @@ class TWorldImpl<
         }
 
         ((std::get<TContainer<TAll>>(containers_).commit()), ...);
-        entity_id_container_.commit();
+        // pizdos: entity_id_container_.commit();
         update_snapshots();
         return true;
     }

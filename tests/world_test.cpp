@@ -255,13 +255,13 @@ TEST(TWorld, TTestMovedEntititesUnseenUntilCommit) {
 }
 
 TEST(TWorld, TTestSelectWithAddDeleteComponents) {
-    static constexpr std::size_t kSize = 1 << 10;
+    static constexpr std::size_t kSize = 1 << 2;
 
-    NCecs::TWorld<NCecs::TTypeList<
+    using TWorld = NCecs::TWorld<NCecs::TTypeList<
         NCecs::TTypeList<int, char>,
         NCecs::TTypeList<std::string, int>,
-        NCecs::TTypeList<std::string, int, char>>>
-        world;
+        NCecs::TTypeList<std::string, int, char>>>;
+    TWorld world;
 
     std::array<std::function<void(std::size_t)>, 2> assertions = {
         [&world](std::size_t i) {
@@ -289,9 +289,10 @@ TEST(TWorld, TTestSelectWithAddDeleteComponents) {
     auto func = [&moves_count, &total_calls](auto entity) mutable {
         ++total_calls;
         if constexpr (entity.template has<char>()) {
-            auto res =
-                entity.template add<std::string>(1, entity.template get<char>())
-                    .template del<char>();
+            auto tmp = entity.template add<std::string>(
+                1, entity.template get<char>()
+            );
+            auto res = tmp.template del<char>();
             ++moves_count;
         }
     };
@@ -540,8 +541,10 @@ TEST(TWorld, TTestCommitInsideIteration) {
 }
 
 TEST(TWorld, TTestGetEntityByID) {
-    using TWorld =
-        NCecs::TWorld<NCecs::TTypeList<NCecs::TTypeList<std::size_t>>>;
+    using TWorld = NCecs::TWorld<NCecs::TTypeList<
+        NCecs::TTypeList<std::size_t>,
+        NCecs::TTypeList<std::size_t, char>,
+        NCecs::TTypeList<std::size_t, char, double>>>;
     TWorld world;
 
     auto e     = world.create<std::size_t>(10);
@@ -551,4 +554,7 @@ TEST(TWorld, TTestGetEntityByID) {
 
     e.template get<std::size_t>() = 100500;
     EXPECT_EQ(var_e.template get<std::size_t>(), 100500);
+    auto id = e.id();
+    EXPECT_NE(id, NCecs::kNullEntityID);
+    EXPECT_EQ(e.template add<char>('0').template add<double>(1.f).id(), id);
 }

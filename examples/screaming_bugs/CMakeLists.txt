@@ -16,12 +16,31 @@ FetchContent_Declare(
     SYSTEM
 )
 
+FetchContent_MakeAvailable(SFML)
+
+add_compile_definitions(EASTL_USER_DEFINED_ALLOCATOR_NEW=0)
+add_compile_definitions(EASTL_ALLOCATOR_EXPLICIT_USER_DEFINED_ALLOCATOR_NEW=0)
+add_compile_definitions(EASTL_STD_ALLOCATOR_ONLY=1)
+
+FetchContent_Declare(
+    EASTL
+    GIT_REPOSITORY https://github.com/electronicarts/EASTL.git
+    GIT_TAG 3.27.01
+    GIT_SHALLOW ON
+    EXCLUDE_FROM_ALL
+    SYSTEM
+)
+
+FetchContent_MakeAvailable(EASTL)
+
 add_executable(
     screaming_bugs
     src/main.cpp
+    src/misc.cpp
 )
 
 target_link_libraries(
     screaming_bugs
     SFML::Graphics
+    EASTL
 )

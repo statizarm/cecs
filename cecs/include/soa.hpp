@@ -17,7 +17,11 @@ template <CLayout T, typename TSOAContainer>
 class TSOAElementRef;
 
 template <CLayout T>
-struct alignas(T::kAlign) TSOA;
+struct alignas(T::kAlign) TSOA : public TBuffer<T> {
+    static_assert(sizeof(TBuffer<T>) <= T::kBufferSize);
+
+    using TBuffer<T>::get;
+};
 
 template <
     std::size_t buffer_size, CIsInstanceOf<TTypeList> T,
@@ -31,10 +35,12 @@ class TSOAContainer {
     using max_buffer_layout = TBufferLayout<kRoundedSize, T>;
 
   private:
+    struct TSOAChunk;
+
     struct THeader {
         std::bitset<max_buffer_layout::kMaxElements> erased{};
-        THeader* next;
-        THeader* prev;
+        TSOAChunk* next;
+        TSOAChunk* prev;
     };
 
   public:
@@ -54,6 +60,11 @@ class TSOAContainer {
     using ref             = TSOAElementRef<buffer_layout, TThis>;
     using iterator        = TIterator;
     using TAvailableTypes = typename buffer_layout::types;
+
+  private:
+    struct TSOAChunk : public THeader {
+        TSOA<buffer_layout> data;
+    };
 
   public:
     static constexpr TSOAElementRef<buffer_layout, TThis> kInvalidRef{
@@ -150,8 +161,8 @@ class TSOAContainer {
 
   public:
     TSOAContainer() {
-        buffer_.next = &buffer_;
-        buffer_.prev = &buffer_;
+        buffer_.next = static_cast<TSOAChunk*>(&buffer_);
+        buffer_.prev = static_cast<TSOAChunk*>(&buffer_);
         first_free_  = &buffer_;
     }
 
@@ -219,10 +230,6 @@ class TSOAContainer {
     }
 
     void commit() {
-        if (!size()) {
-            return;
-        }
-
         auto first_bad = begin();
         auto last_good = end();
         for (; first_bad != last_good;) {
@@ -240,13 +247,9 @@ class TSOAContainer {
     template <typename TT>
         requires(TAvailableTypes::template has<TT>::value)
     ref get_ref_by_ptr(TT* ptr) {
-        THeader* header = find_header_by_ptr(ptr);
-        std::size_t position =
-            ((reinterpret_cast<std::size_t>(ptr) &
-              (kBufferWithHeaderSize - 1)) -
-             kHeaderSize - buffer_layout::template offset<TT>::value) /
-            sizeof(TT);
-        return ref(header, position);
+        auto header = reinterpret_cast<TSOAChunk*>(find_header_by_ptr(ptr));
+        std::size_t position = ptr - &header->data.template get<TT>(0);
+        return ref(&header->data, position);
     }
 
     TIterator begin() {
@@ -264,8 +267,10 @@ class TSOAContainer {
   private:
     void erase(TIterator first_bad, TIterator last_good) {
         if (first_bad != last_good) {
-            (*first_bad).replace_from(*last_good);
-            (*last_good).deinit(TAvailableTypes{});
+            auto b             = buffer_layout::kMaxElements;
+            auto last_good_ref = *last_good;
+            auto first_bad_ref = *first_bad;
+            first_bad_ref.replace_from(std::move(last_good_ref));
 
             first_bad.set_erased(false);
             last_good.set_erased(true);
@@ -290,26 +295,17 @@ class TSOAContainer {
         THeader* free      = static_cast<THeader*>(TAllocator::aligned_alloc(
             kBufferWithHeaderSize, kBufferWithHeaderSize
         ));
-        free->next         = &buffer_;
+        free->next         = static_cast<TSOAChunk*>(&buffer_);
         free->prev         = buffer_.prev;
         free->erased       = {};
-        buffer_.prev->next = free;
-        buffer_.prev       = free;
+        buffer_.prev->next = static_cast<TSOAChunk*>(free);
+        buffer_.prev       = static_cast<TSOAChunk*>(free);
         return free;
     }
 
-    static void* calc_buffer_start(THeader* header) {
-        return reinterpret_cast<void*>(
-            reinterpret_cast<std::byte*>(header) + kHeaderSize +
-            buffer_layout::template offset<
-                typename buffer_layout::TFirst>::value
-        );
-    }
-
     static inline ref get_ref_from_header(THeader* header, std::size_t idx) {
-        auto buffer =
-            static_cast<buffer_layout::TFirst*>(calc_buffer_start(header));
-        return ref(static_cast<void*>(buffer), idx);
+        auto chunk = reinterpret_cast<TSOAChunk*>(header);
+        return ref(&chunk->data, idx);
     }
 
   private:
@@ -335,21 +331,13 @@ class TSOAElementRef {
     template <typename T>
         requires(TAvailableTypes::template has<T>::value)
     T& get() {
-        static constexpr std::size_t offset =
-            buffer_layout::template offset<T>::value;
-        return *reinterpret_cast<T*>(
-            static_cast<std::byte*>(ptr_) + offset + position_ * sizeof(T)
-        );
+        return ptr_->template get<T>(position_);
     }
 
     template <typename T>
         requires(TAvailableTypes::template has<T>::value)
     const T& get() const {
-        static constexpr std::size_t offset =
-            buffer_layout::template offset<T>::value;
-        return *reinterpret_cast<T*>(
-            static_cast<std::byte*>(ptr_) + offset + position_ * sizeof(T)
-        );
+        return ptr_->template get<T>(position_);
     }
 
     template <typename TOther>
@@ -375,7 +363,7 @@ class TSOAElementRef {
             (
                 [](TThis* lhs, auto&& rhs) {
                     if constexpr (
-                        std::is_rvalue_reference_v<decltype(other)> &&
+                        std::is_rvalue_reference_v<decltype(rhs)> &&
                         (std::is_move_constructible_v<T> ||
                          std::is_move_assignable_v<T>)
                     ) {
@@ -406,7 +394,7 @@ class TSOAElementRef {
     }
 
   private:
-    constexpr TSOAElementRef(void* ptr, std::size_t position)
+    constexpr TSOAElementRef(TSOA<TLayout>* ptr, std::size_t position)
         : ptr_(ptr), position_(position) {
     }
 
@@ -433,7 +421,7 @@ class TSOAElementRef {
     }
 
   private:
-    void* ptr_;
+    TSOA<TLayout>* ptr_;
     std::size_t position_;
 };
 
