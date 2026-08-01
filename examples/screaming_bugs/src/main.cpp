@@ -444,6 +444,6 @@ int main() {
         }
         window.display();
     }
-    game.deinit();
     fut.wait();
+    game.deinit();
 }
